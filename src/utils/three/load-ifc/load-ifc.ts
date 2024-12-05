@@ -2,7 +2,7 @@ import { IfcProgressEvent } from '@/classes/ifc-progress-event'
 import { type GeometryId, type IfcGroup, type MaterialId } from '@/types/types'
 import { fetchFile } from '@/utils/fetch-file'
 import { Group, type BufferGeometry, type MeshLambertMaterial } from 'three'
-import { IfcAPI } from 'web-ifc'
+import { IfcAPI, LogLevel } from 'web-ifc'
 import { isRunningInBrowser } from '../..'
 import { buildMesh, setIfcUserData } from '../ifc'
 
@@ -39,10 +39,12 @@ const loadIfc: LoadIfcFunctionType = async (
 	try {
 		const wasmPath = wasm
 			? { path: wasm.path, absolute: wasm.absolute }
-			: { path: isRunningInBrowser() ? `${location.origin}/wasm/` : 'public/wasm/', absolute: true }
+			: { path: isRunningInBrowser() ? `${location.origin}/wasm/0.66/` : 'public/wasm/0.66/', absolute: true }
 
 		ifcAPI.SetWasmPath(wasmPath.path, wasmPath.absolute)
+
 		await ifcAPI.Init()
+		ifcAPI.SetLogLevel(LogLevel.LOG_LEVEL_OFF)
 
 		let buffer: Uint8Array | undefined
 

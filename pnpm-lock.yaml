@@ -18,8 +18,8 @@ importers:
         specifier: ^0.171.0
         version: 0.171.0
       web-ifc:
-        specifier: ^0.0.56
-        version: 0.0.56
+        specifier: ^0.0.66
+        version: 0.0.66
     devDependencies:
       '@storybook/addon-actions':
         specifier: ^8.4.6
@@ -3161,8 +3161,8 @@ packages:
     resolution: {integrity: sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==}
     engines: {node: '>=18'}
 
-  web-ifc@0.0.56:
-    resolution: {integrity: sha512-jbPW+k57Ci9c0s/eOVLXPdPtxiSZHZgzAmQhbE8Kn6/E/0PNcJA+2Ti/W+F9I5NijVvuUdPPjxtIp9hSqcBjYg==}
+  web-ifc@0.0.66:
+    resolution: {integrity: sha512-IhZKWALbhiq7LKfx4jZIcOPX2VZ+3PDZcPICHhX7Y8ilvofXg4qhPHncCMQibEsgHA25g4bn5o3pQbbhluiZHw==}
 
   webidl-conversions@7.0.0:
     resolution: {integrity: sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==}
@@ -6440,7 +6440,7 @@ snapshots:
     dependencies:
       xml-name-validator: 5.0.0
 
-  web-ifc@0.0.56: {}
+  web-ifc@0.0.66: {}
 
   webidl-conversions@7.0.0: {}
 
