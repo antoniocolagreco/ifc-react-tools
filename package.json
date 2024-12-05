@@ -30,15 +30,14 @@
 	},
 	"scripts": {
 		"dev": "storybook dev -p 6006",
+		"build:lib": "tsc && vite build",
+		"build:storybook": "storybook build",
+		"lint": "eslint ./src/**/*.{ts,tsx} --fix",
+		"format": "prettier . --write --ignore-unknown",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:ui": "vitest --ui",
-		"test:coverage": "vitest run --coverage",
-		"build": "storybook build",
-		"build:lib": "tsc && vite build",
-		"lint": "eslint ./src/**/*.{ts,tsx} --fix",
-		"format": "prettier . --write --ignore-unknown",
-		"prepare": "husky"
+		"test:coverage": "vitest run --coverage"
 	},
 	"devDependencies": {
 		"@storybook/addon-actions": "^8.4.6",
@@ -56,6 +55,7 @@
 		"@types/node": "^22.10.1",
 		"@types/react": "^18.3.12",
 		"@types/react-dom": "^18.3.1",
+		"@types/three": "^0.170.0",
 		"@typescript-eslint/parser": "^8.17.0",
 		"@vitejs/plugin-react-swc": "^3.7.2",
 		"@vitest/coverage-v8": "^2.1.8",
@@ -72,7 +72,6 @@
 		"eslint-plugin-storybook": "^0.11.1",
 		"eslint-plugin-unicorn": "^56.0.1",
 		"globals": "^15.13.0",
-		"husky": "^9.1.7",
 		"jsdom": "^25.0.1",
 		"postcss": "^8.4.49",
 		"prettier": "^3.4.1",
@@ -89,5 +88,9 @@
 		"react": ">=18.3.1",
 		"react-dom": ">=18.3.1"
 	},
-	"packageManager": "pnpm@9.14.4+sha512.c8180b3fbe4e4bca02c94234717896b5529740a6cbadf19fa78254270403ea2f27d4e1d46a08a0f56c89b63dc8ebfd3ee53326da720273794e6200fcf0d184ab"
+	"packageManager": "pnpm@9.14.4+sha512.c8180b3fbe4e4bca02c94234717896b5529740a6cbadf19fa78254270403ea2f27d4e1d46a08a0f56c89b63dc8ebfd3ee53326da720273794e6200fcf0d184ab",
+	"dependencies": {
+		"three": "^0.171.0",
+		"web-ifc": "^0.0.56"
+	}
 }

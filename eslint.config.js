@@ -43,6 +43,9 @@ const config = tseslint.config({
 		'unicorn/prevent-abbreviations': 'off',
 		'react/jsx-filename-extension': ['error', { extensions: ['.tsx'] }],
 		'react/react-in-jsx-scope': 'off',
+		'unicorn/numeric-separators-style': 'off',
+		'unicorn/no-null': 'off',
+		'@typescript-eslint/no-unnecessary-condition': ['error', { allowConstantLoopConditions: true }],
 	},
 	settings: {
 		react: {

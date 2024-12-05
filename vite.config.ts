@@ -1,15 +1,20 @@
 import react from '@vitejs/plugin-react-swc'
 import { join, resolve } from 'path'
-import type { UserConfig } from 'vite'
-import { defineConfig } from 'vite'
+import { defineConfig, mergeConfig } from 'vite'
 import dts from 'vite-plugin-dts'
+import { defineConfig as testDefineConfig } from 'vitest/config'
 import { peerDependencies } from './package.json'
 
-export default defineConfig({
+const basicConfig = defineConfig({
 	plugins: [
 		react(),
 		dts({ rollupTypes: true }), // Output .d.ts files
 	],
+	resolve: {
+		alias: {
+			'@': resolve(__dirname, 'src'),
+		},
+	},
 	build: {
 		target: 'esnext',
 		minify: false,
@@ -23,4 +28,17 @@ export default defineConfig({
 			external: ['react/jsx-runtime', ...Object.keys(peerDependencies)],
 		},
 	},
-}) satisfies UserConfig
+})
+
+const testConfig = testDefineConfig({
+	test: {
+		environment: 'jsdom',
+		setupFiles: './src/test/setup.ts',
+		coverage: {
+			all: false,
+			enabled: true,
+		},
+	},
+})
+
+export default mergeConfig(basicConfig, testConfig)
