@@ -19,12 +19,11 @@ const fetchFile: FetchFileFunctionType = async (url: string, onDone, onProgress,
 				throw new Error(`File not found at "${url}"`)
 			}
 
+			let total = -1
 			const contentLength = response.headers.get('Content-Length')
-			if (!contentLength) {
-				throw new Error('Content-Length header is missing')
+			if (contentLength) {
+				total = Number.parseInt(contentLength, 10)
 			}
-
-			const total = Number.parseInt(contentLength, 10)
 
 			const reader = response.body?.getReader()
 

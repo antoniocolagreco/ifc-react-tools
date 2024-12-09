@@ -1,189 +1,98 @@
 'use client'
 
+import { Grid } from '@/3d-components/grid'
+import type IfcItem from '@/classes/ifc-item'
+import IfcMesh from '@/classes/ifc-mesh'
+import IfcModel from '@/classes/ifc-model'
+import type { MouseState } from '@/types/mouse-status'
+import type { IfcViewerVisibilityMode } from '@/types/visibility-mode'
+import { filterIfcItemsByPropertiesAndType, setIfcData } from '@/utils/ifc/properties-util'
+import { restoreData } from '@/utils/ifc/save-utils/save-util'
+import { createBoundingSphere, createSphereMesh, fitBoundingSphere } from '@/utils/three/camera-utils'
 import { centerObject } from '@/utils/three/center-object'
-import { Grid } from 'src/3d-components/grid'
-import {
-	checkIfMeshPropertiesMeetsRequirements,
-	createBoundingSphere,
-	createBoundingSphereMesh,
-	disposeObjects,
-	findObjectsByIfcPropAndType,
-	findPropertyValueFromIfcMesh,
-	fitBoundingSphere,
-	generateUserData,
-	getAllMeshesByExpressId,
-	getMeshExpressId,
-	getRelativeMeshes,
-	getSelectableMeshes,
-	isGroup,
-	isIfcGroup,
-	isIfcMesh,
-	isLambertMesh,
-	isMeshAlwaysVisible,
-	isMeshSelectable,
-} from '@/utils/three/ifc'
-import { IFCLoader } from '@/utils/three/load-ifc/ifc-loader'
-import type {
-	IfcGroup,
-	IfcMesh,
-	IfcObject,
-	IfcScene,
-	LambertMesh,
-	MarkableRequirements,
-	NodeData,
-	Property,
-	Requirements,
-	SelectableRequirements,
-} from 'src/types/types'
+import { disposeObjects } from '@/utils/three/dispose-utils'
+import { loadIfc } from '@/utils/three/load-ifc'
 import clsx from 'clsx'
-import {
-	ArrowUpIcon,
-	BarChart2,
-	EyeIcon,
-	FullscreenIcon,
-	HouseIcon,
-	Minimize2Icon,
-	RabbitIcon,
-	TurtleIcon,
-} from 'lucide-react'
+import { ArrowUpIcon, BarChart2, EyeIcon, FullscreenIcon, HouseIcon, Minimize2Icon } from 'lucide-react'
 import {
 	forwardRef,
 	useCallback,
 	useEffect,
-	useImperativeHandle,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type HTMLAttributes,
 	type MouseEvent,
-	type ReactNode,
 } from 'react'
+import type {
+	IfcData,
+	LambertMesh,
+	LinkRequirements,
+	Property,
+	Requirements,
+	SelectableRequirements,
+} from 'src/types/types'
 import {
 	AmbientLight,
-	Box3,
 	DirectionalLight,
 	MeshLambertMaterial,
 	PerspectiveCamera,
 	Raycaster,
 	Scene,
 	Vector2,
-	Vector3,
 	WebGLRenderer,
 	type Intersection,
-	type Mesh,
-	type Object3D,
-	type ShaderMaterial,
 	type Sphere,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/Addons.js'
-import { Button } from '../button'
 
 const LAYER_MESHES = 0
 const LAYER_HELPERS = 29
 
-type MouseStatus = { clicked: boolean; x: number; y: number }
-
-type LoadingStep =
-	| 'IDLE'
-	| 'DOWNLOADING'
-	| 'LOADING_MODEL'
-	| 'LOADING_DATA'
-	| 'GENERATING_DATA'
-	| 'GENERATING_ANCHORS'
-	| 'DONE'
-	| 'ERROR_URL'
-	| 'ERROR_DOWNLOAD'
-	| 'ERROR_DATA'
-	| 'ERROR'
-
-type LoadingMessage = Record<LoadingStep, string>
-
-type LoadingStatus = { step: LoadingStep; loaded?: number | undefined; total?: number | undefined }
-
-type ScreenPosition = { x: number; y: number }
-
-type Anchor = {
-	id: number
-	position3d: Vector3
-	screenPosition: ScreenPosition
-	visible: boolean
-	children?: ReactNode
-}
-
-type VisibleMarker = {
-	id: number
-	content: ReactNode
-}
-
 type On3DModelLoadedType = (ifc: {
-	model?: IfcGroup
-	selectByProperty: (property: Property) => IfcMesh | undefined
+	model?: IfcModel
+	selectableItems: IfcItem[]
+	selectByProperty: (property: Property) => IfcItem | undefined
 	selectByExpressId: (expressId: number | undefined) => void
-	selectableMeshes: IfcMesh[]
 }) => void
 
 type IfcViewerProps = HTMLAttributes<HTMLDivElement> & {
-	modelUrl?: string
+	url: string
+	data?: IfcData
 
-	onLoad?: (event: ProgressEvent) => void
-	onLoaded?: On3DModelLoadedType
+	onLoad?: On3DModelLoadedType
 
-	visibleMarkers?: VisibleMarker[]
+	// visibleMarkers?: VisibleMarker[]
 
-	directSearch?: boolean
-	data?: NodeData[]
-
-	selectablesRequirements?: SelectableRequirements[]
-	alwaysVisibleRequirements?: Requirements[]
-	markableRequirements?: MarkableRequirements[]
+	links?: LinkRequirements[]
+	selectable?: SelectableRequirements[]
+	alwaysVisible?: Requirements[]
+	anchors?: Requirements[]
 
 	highlightedSelectables?: SelectableRequirements[]
-	showTooltip?: ReactNode
-	onMeshSelect?: (object?: IfcMesh, expressId?: number) => void
-	onMeshHover?: (object?: IfcMesh, expressId?: number) => void
+	// showTooltip?: ReactNode
+
+	onMeshSelect?: (ifcItem?: IfcItem) => void
+	onMeshHover?: (ifcItem?: IfcItem) => void
 
 	showBoundingSphere?: boolean
 	enableMeshSelection?: boolean
 	enableMeshHover?: boolean
-
-	messages?: LoadingMessage
-}
-
-const LOW_QUALITY_KEY = 'low-3d-quality'
-
-enum ModelVisibilityMode {
-	ALL,
-	TRANSPARENT,
-	SELECTABLE,
-}
-
-const checkIfIsSelectable = (mesh?: Object3D): boolean => {
-	if (!mesh) return false
-	if (isIfcMesh(mesh) && mesh.userData.selectable) {
-		return true
-	}
-	const parent = mesh.parent
-	if (!parent) return false
-	if (isIfcGroup(parent) && parent.userData.selectable) {
-		return true
-	}
-
-	return false
 }
 
 const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	const {
-		modelUrl: url,
-		onLoaded,
-		onLoad,
-
-		visibleMarkers,
+		url,
 		data,
 
-		directSearch = false,
+		onLoad,
 
-		selectablesRequirements,
-		alwaysVisibleRequirements,
-		markableRequirements,
+		// visibleMarkers,
+
+		links: linksRequirements,
+		selectable: selectableRequirements,
+		alwaysVisible: alwaysVisibleRequirements,
+		anchors: anchorRequirements,
 
 		onMeshHover,
 		onMeshSelect,
@@ -192,188 +101,174 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		enableMeshSelection = false,
 		showBoundingSphere = false,
 
-		// messages = {
-		// 	DONE: 'Fatto',
-		// 	DOWNLOADING: 'Scaricando il file...',
-		// 	GENERATING_ANCHORS: 'Generazione ancore...',
-		// 	GENERATING_DATA: 'Ricerca colonne e sensori...',
-		// 	IDLE: 'In attesa',
-		// 	LOADING_MODEL: 'Caricando il file...',
-		// 	LOADING_DATA: 'Caricando colonne e sensori...',
-		// 	ERROR: 'Erroreo',
-		// 	ERROR_URL: 'URL non valido',
-		// 	ERROR_DOWNLOAD: 'Errore durante il download',
-		// 	ERROR_DATA: 'Errore caricamento dati',
-		// },
-
 		className,
 		...otherProps
 	} = props
 
-	const animationFrameIdRef = useRef<number>()
-	const ifcLoaderRef = useRef(new IFCLoader())
-	const innerRef = useRef<HTMLDivElement>(null)
+	const containerRef = useRef<HTMLDivElement>(null)
 	const canvasRef = useRef<HTMLCanvasElement>(null)
+
 	const rendererRef = useRef<WebGLRenderer>()
 	const cameraRef = useRef<PerspectiveCamera>()
 	const controlsRef = useRef<OrbitControls>()
-	const sceneRef = useRef<IfcScene>()
-	const modelRef = useRef<IfcGroup>()
+
+	const animationFrameIdRef = useRef<number>()
+
+	const sceneRef = useRef<Scene>(new Scene())
+	const modelRef = useRef<IfcModel>(new IfcModel())
 	const rayCasterRef = useRef<Raycaster>(new Raycaster())
+
 	const pointerRef = useRef<Vector2>(new Vector2())
+
 	const boundingSphereRef = useRef<Sphere>()
 	const boundingSphereMeshRef = useRef<LambertMesh>()
-	const selectedMeshesRef = useRef<Mesh[]>([])
-	const hoveredMeshesRef = useRef<Mesh[]>([])
-	const originalMaterialsRef = useRef<Map<Mesh, MeshLambertMaterial | ShaderMaterial>>(new Map())
+
+	const selectedIfcItemRef = useRef<IfcItem>()
+	const hoveredIfcItemRef = useRef<IfcItem>()
+	// const originalMaterialsRef = useRef<Map<Mesh, MeshLambertMaterial | ShaderMaterial>>(new Map())
+
 	const selectableIntersectionsRef = useRef<Intersection<IfcMesh>[]>([])
 	const statusRef = useRef<'NOT_INITIALIZED' | 'READY' | 'MODEL_LOADED'>('NOT_INITIALIZED')
-	const mouseStatusRef = useRef<MouseStatus>({ clicked: false, x: 0, y: 0 })
-	const [loadingProgress, setLoadingProgress] = useState<LoadingStatus>({
-		step: 'IDLE',
-		loaded: 0,
-		total: 1000000,
-	})
-	const isLoading = loadingProgress.step !== 'DONE'
-	const [lowQuality, setLowQuality] = useState(localStorage.getItem(LOW_QUALITY_KEY) === 'true' || false)
+	const mouseStatusRef = useRef<MouseState>({ clicked: false, x: 0, y: 0 })
+
 	const shouldRerenderRef = useRef(false)
 	const shouldRerenderTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
 	const [fullScreen, setFullScreen] = useState(false)
-	const [modelVisibilityMode, setModelVisibilityMode] = useState<ModelVisibilityMode>(ModelVisibilityMode.ALL)
-	const [anchors, setAnchors] = useState<Anchor[]>([])
-	const markersPositionsMap = useRef(new Map<number, Vector3[]>())
+	const [modelVisibilityMode, setModelVisibilityMode] = useState<IfcViewerVisibilityMode>('all')
 
-	// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-	useImperativeHandle(ref, () => innerRef.current!, [])
+	// const [anchors, setAnchors] = useState<Anchor[]>([])
 
-	const updateAnchors = useCallback((): void => {
-		setAnchors(anchorsList => {
-			const newAnchors: Anchor[] = []
+	// const markersPositionsMap = useRef(new Map<number, Vector3[]>())
 
-			for (const anchor of anchorsList) {
-				const newAnchor = {
-					...anchor,
-					position2d: transformViewportPositionToScreenPosition(anchor.position3d),
-				}
-				newAnchors.push(newAnchor)
-			}
+	// const updateAnchors = useCallback((): void => {
+	// 	setAnchors(anchorsList => {
+	// 		const newAnchors: Anchor[] = []
 
-			return newAnchors
-		})
-	}, [])
+	// 		for (const anchor of anchorsList) {
+	// 			const newAnchor = {
+	// 				...anchor,
+	// 				position2d: transformViewportPositionToScreenPosition(anchor.position3d),
+	// 			}
+	// 			newAnchors.push(newAnchor)
+	// 		}
 
-	const generateAnchorPositionsFromValues = useCallback((): void => {
-		if (!markableRequirements) return
-		if (!modelRef.current) return
-		// Find meshes that meet the requirements
-		const meshesToMark: IfcMesh[] = []
-		const selectableMeshes = getSelectableMeshes(modelRef.current)
-		for (const selectableMesh of selectableMeshes) {
-			const relatives = selectableMesh.userData.relatives
-			if (relatives)
-				for (const relative of relatives) {
-					for (const mesh of modelRef.current.children) {
-						if (mesh.userData['expressId'] === relative.expressId) {
-							mesh.userData = { ...mesh.userData, ...relative }
-							meshesToMark.push(mesh as IfcMesh)
-						}
-					}
-				}
-		}
+	// 		return newAnchors
+	// 	})
+	// }, [])
 
-		for (const mesh of meshesToMark) {
-			for (const markableRequirement of markableRequirements) {
-				const position = new Vector3()
-				const box3 = new Box3()
-				box3.setFromObject(mesh)
-				box3.getCenter(position)
+	// const generateAnchorPositionsFromValues = useCallback((): void => {
+	// 	if (!markableRequirements) return
+	// 	if (!modelRef.current) return
+	// 	// Find meshes that meet the requirements
+	// 	const meshesToMark: IfcMesh[] = []
+	// 	const selectableMeshes = getSelectableMeshes(modelRef.current)
+	// 	for (const selectableMesh of selectableMeshes) {
+	// 		const relatives = selectableMesh.userData.relatives
+	// 		if (relatives)
+	// 			for (const relative of relatives) {
+	// 				for (const mesh of modelRef.current.children) {
+	// 					if (mesh.userData['expressId'] === relative.expressId) {
+	// 						mesh.userData = { ...mesh.userData, ...relative }
+	// 						meshesToMark.push(mesh as IfcMesh)
+	// 					}
+	// 				}
+	// 			}
+	// 	}
 
-				const markerId = mesh.userData.values?.[markableRequirement.propertyToUseAsMarkerId]
+	// 	for (const mesh of meshesToMark) {
+	// 		for (const markableRequirement of markableRequirements) {
+	// 			const position = new Vector3()
+	// 			const box3 = new Box3()
+	// 			box3.setFromObject(mesh)
+	// 			box3.getCenter(position)
 
-				if (!markerId) continue
-				const markerAsNumber = Number(markerId)
+	// 			const markerId = mesh.userData.values?.[markableRequirement.propertyToUseAsMarkerId]
 
-				let markerPositionsArray = markersPositionsMap.current.get(markerAsNumber)
-				if (!markerPositionsArray) {
-					markerPositionsArray = []
-					markersPositionsMap.current.set(markerAsNumber, markerPositionsArray)
-				}
+	// 			if (!markerId) continue
+	// 			const markerAsNumber = Number(markerId)
 
-				markerPositionsArray.push(position)
-			}
-		}
-	}, [markableRequirements])
+	// 			let markerPositionsArray = markersPositionsMap.current.get(markerAsNumber)
+	// 			if (!markerPositionsArray) {
+	// 				markerPositionsArray = []
+	// 				markersPositionsMap.current.set(markerAsNumber, markerPositionsArray)
+	// 			}
 
-	const generateAnchorsPositionsFromProperties = useCallback((): void => {
-		if (!modelRef.current || !markableRequirements) return
+	// 			markerPositionsArray.push(position)
+	// 		}
+	// 	}
+	// }, [markableRequirements])
 
-		for (const mesh of modelRef.current.children as IfcMesh[]) {
-			for (const markableRequirement of markableRequirements) {
-				if (checkIfMeshPropertiesMeetsRequirements(mesh.userData, markableRequirement)) {
-					const position = new Vector3()
-					const box3 = new Box3()
-					box3.setFromObject(mesh)
-					box3.getCenter(position)
+	// const generateAnchorsPositionsFromProperties = useCallback((): void => {
+	// 	if (!modelRef.current || !markableRequirements) return
 
-					const markerId = findPropertyValueFromIfcMesh(mesh, markableRequirement.propertyToUseAsMarkerId)
+	// 	for (const mesh of modelRef.current.children as IfcMesh[]) {
+	// 		for (const markableRequirement of markableRequirements) {
+	// 			if (checkIfMeshPropertiesMeetsRequirements(mesh.userData, markableRequirement)) {
+	// 				const position = new Vector3()
+	// 				const box3 = new Box3()
+	// 				box3.setFromObject(mesh)
+	// 				box3.getCenter(position)
 
-					if (!markerId) continue
-					const markerAsNumber = Number(markerId)
+	// 				const markerId = findPropertyValueFromIfcMesh(mesh, markableRequirement.propertyToUseAsMarkerId)
 
-					let markerPositionsArray = markersPositionsMap.current.get(markerAsNumber)
-					if (!markerPositionsArray) {
-						markerPositionsArray = []
-						markersPositionsMap.current.set(markerAsNumber, markerPositionsArray)
-					}
+	// 				if (!markerId) continue
+	// 				const markerAsNumber = Number(markerId)
 
-					markerPositionsArray.push(position)
-				}
-			}
-		}
-	}, [markableRequirements])
+	// 				let markerPositionsArray = markersPositionsMap.current.get(markerAsNumber)
+	// 				if (!markerPositionsArray) {
+	// 					markerPositionsArray = []
+	// 					markersPositionsMap.current.set(markerAsNumber, markerPositionsArray)
+	// 				}
 
-	const generateAnchors = useCallback((): void => {
-		if (directSearch) {
-			generateAnchorsPositionsFromProperties()
-		} else {
-			generateAnchorPositionsFromValues()
-		}
-		const newAnchors: Anchor[] = []
-		for (const [markerKey, markerPositions] of markersPositionsMap.current.entries()) {
-			const boundingBox = new Box3()
-			for (const position of markerPositions) {
-				boundingBox.expandByPoint(position)
-			}
-			const center = new Vector3()
-			boundingBox.getCenter(center)
-			const newAnchor: Anchor = {
-				id: markerKey,
-				position3d: center,
-				screenPosition: transformViewportPositionToScreenPosition(center),
-				visible: visibleMarkers?.map(vm => vm.id).includes(markerKey) ?? false,
-				children: visibleMarkers?.find(vm => vm.id === markerKey)?.content,
-			}
+	// 				markerPositionsArray.push(position)
+	// 			}
+	// 		}
+	// 	}
+	// }, [markableRequirements])
 
-			newAnchors.push(newAnchor)
-		}
-		setAnchors(newAnchors)
-	}, [directSearch, generateAnchorPositionsFromValues, generateAnchorsPositionsFromProperties, visibleMarkers])
+	// const generateAnchors = useCallback((): void => {
+	// 	if (directSearch) {
+	// 		generateAnchorsPositionsFromProperties()
+	// 	} else {
+	// 		generateAnchorPositionsFromValues()
+	// 	}
+	// 	const newAnchors: Anchor[] = []
+	// 	for (const [markerKey, markerPositions] of markersPositionsMap.current.entries()) {
+	// 		const boundingBox = new Box3()
+	// 		for (const position of markerPositions) {
+	// 			boundingBox.expandByPoint(position)
+	// 		}
+	// 		const center = new Vector3()
+	// 		boundingBox.getCenter(center)
+	// 		const newAnchor: Anchor = {
+	// 			id: markerKey,
+	// 			position3d: center,
+	// 			screenPosition: transformViewportPositionToScreenPosition(center),
+	// 			visible: visibleMarkers?.map(vm => vm.id).includes(markerKey) ?? false,
+	// 			children: visibleMarkers?.find(vm => vm.id === markerKey)?.content,
+	// 		}
+
+	// 		newAnchors.push(newAnchor)
+	// 	}
+	// 	setAnchors(newAnchors)
+	// }, [directSearch, generateAnchorPositionsFromValues, generateAnchorsPositionsFromProperties, visibleMarkers])
 
 	const renderScene = useCallback((): void => {
-		if (rendererRef.current && controlsRef.current && sceneRef.current && cameraRef.current && innerRef.current) {
-			const width = innerRef.current.clientWidth
-			const height = innerRef.current.clientHeight
-			cameraRef.current.aspect = width / height
-			cameraRef.current.updateProjectionMatrix()
-			rendererRef.current.setSize(width, height)
-			controlsRef.current.update()
-			rendererRef.current.render(sceneRef.current, cameraRef.current)
+		if (!containerRef.current || !rendererRef.current || !cameraRef.current || !controlsRef.current) {
+			return
 		}
+
+		const width = containerRef.current.clientWidth
+		const height = containerRef.current.clientHeight
+		cameraRef.current.aspect = width / height
+		cameraRef.current.updateProjectionMatrix()
+		rendererRef.current.setSize(width, height)
+		controlsRef.current.update()
+		rendererRef.current.render(sceneRef.current, cameraRef.current)
 	}, [])
 
 	const resetScene = useCallback((): void => {
 		disposeObjects(sceneRef.current)
-		if (!sceneRef.current) return
 		sceneRef.current.children.length = 0
 
 		const ambientLight = new AmbientLight(0xffffff, 0.5)
@@ -390,196 +285,151 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	}, [])
 
 	const updateBoundingSphere = useCallback((): void => {
-		if (!modelRef.current) throw new Error('Model not loaded')
-		let meshes = modelRef.current.children
-		if (selectedMeshesRef.current.length > 0) {
-			meshes = selectedMeshesRef.current
-		}
+		const meshes: IfcMesh[] = selectedIfcItemRef.current?.children ?? modelRef.current.getAllMeshes()
+
 		boundingSphereRef.current = createBoundingSphere(meshes)
 
 		if (!showBoundingSphere) return
 
-		if (!sceneRef.current) throw new Error('Scene not loaded')
 		if (boundingSphereMeshRef.current) {
 			sceneRef.current.remove(boundingSphereMeshRef.current)
 		}
-		const sphereMesh = createBoundingSphereMesh(boundingSphereRef.current)
+		const sphereMesh = createSphereMesh(boundingSphereRef.current)
 		sphereMesh.layers.set(LAYER_HELPERS)
 		boundingSphereMeshRef.current = sphereMesh
 		sceneRef.current.add(boundingSphereMeshRef.current)
 	}, [showBoundingSphere])
 
-	const setMeshToSelected = useCallback((mesh: LambertMesh): void => {
-		mesh.visible = true
-		const originalMaterial = originalMaterialsRef.current.get(mesh)
-		if (!originalMaterial) {
-			originalMaterialsRef.current.set(mesh, mesh.material)
-		}
-		const selectedMaterial = new MeshLambertMaterial()
-		selectedMaterial.copy(mesh.material)
-		selectedMaterial.emissive.setHex(0x16a34a)
-		selectedMaterial.depthTest = false
-		mesh.material = selectedMaterial
-	}, [])
+	const displayIfcItemAsSelected = useCallback((ifcItem: IfcItem): void => {
+		ifcItem.visible = true
 
-	const setMeshToHovered = useCallback((mesh: LambertMesh): void => {
-		mesh.visible = true
-		const originalMaterial = originalMaterialsRef.current.get(mesh)
-		if (!originalMaterial) {
-			originalMaterialsRef.current.set(mesh, mesh.material)
-		}
-		const hoveredMaterial = new MeshLambertMaterial()
-		hoveredMaterial.copy(mesh.material)
-		hoveredMaterial.emissive.setHex(0x00498a)
-		hoveredMaterial.depthTest = false
-		mesh.material = hoveredMaterial
-	}, [])
-
-	const setMeshToHalfTransparent = useCallback((mesh: LambertMesh): void => {
-		mesh.visible = true
-		const originalMaterial = originalMaterialsRef.current.get(mesh)
-		if (!originalMaterial) {
-			originalMaterialsRef.current.set(mesh, mesh.material)
-		}
-		const transparentMaterial = new MeshLambertMaterial()
-		transparentMaterial.copy(mesh.material)
-		transparentMaterial.transparent = true
-		transparentMaterial.opacity = 0.3
-		mesh.material = transparentMaterial
-	}, [])
-
-	const restoreMeshMaterial = useCallback((mesh: LambertMesh): void => {
-		mesh.visible = true
-		const originalMaterial = originalMaterialsRef.current.get(mesh)
-		if (originalMaterial) {
-			mesh.material = originalMaterial
+		for (const ifcMesh of ifcItem.children) {
+			const selectedMaterial = new MeshLambertMaterial()
+			selectedMaterial.copy(ifcMesh.material)
+			selectedMaterial.emissive.setHex(0x16a34a)
+			selectedMaterial.depthTest = false
+			ifcMesh.material = selectedMaterial
 		}
 	}, [])
 
-	const setMeshToHidden = useCallback((mesh: LambertMesh): void => {
-		mesh.visible = false
+	const displayIfcItemAsHovered = useCallback((ifcItem: IfcItem): void => {
+		ifcItem.visible = true
+
+		for (const ifcMesh of ifcItem.children) {
+			const hoveredMaterial = new MeshLambertMaterial()
+			hoveredMaterial.copy(ifcMesh.material)
+			hoveredMaterial.emissive.setHex(0x00498a)
+			hoveredMaterial.depthTest = false
+			ifcMesh.material = hoveredMaterial
+		}
 	}, [])
 
-	const updateMeshVisibility = useCallback(
-		(mesh: Mesh) => {
-			if (isLambertMesh(mesh)) {
-				if (selectedMeshesRef.current.includes(mesh)) {
-					setMeshToSelected(mesh)
-				} else if (hoveredMeshesRef.current.includes(mesh)) {
-					setMeshToHovered(mesh)
-				} else {
-					switch (modelVisibilityMode) {
-						case ModelVisibilityMode.ALL: {
-							restoreMeshMaterial(mesh)
-							break
+	const displayIfcItemAsTransparent = useCallback((ifcItem: IfcItem): void => {
+		ifcItem.visible = true
+
+		for (const ifcMesh of ifcItem.children) {
+			const transparentMaterial = new MeshLambertMaterial()
+			transparentMaterial.copy(ifcMesh.material)
+			transparentMaterial.transparent = true
+			transparentMaterial.opacity = 0.3
+			ifcMesh.material = transparentMaterial
+		}
+	}, [])
+
+	const displayIfcItemAsDefault = useCallback((ifcItem: IfcItem): void => {
+		ifcItem.visible = true
+		for (const ifcMesh of ifcItem.children) {
+			const originalMaterial = modelRef.current.getItemMaterial(ifcMesh.userData.materialId)
+			if (originalMaterial) {
+				ifcMesh.material = originalMaterial
+			}
+		}
+	}, [])
+
+	const displayIfcItemAsHidden = useCallback((ifcItem: IfcItem): void => {
+		ifcItem.visible = false
+	}, [])
+
+	const updateIfcItemVisibility = useCallback(
+		(ifcItem: IfcItem) => {
+			if (ifcItem === selectedIfcItemRef.current) {
+				displayIfcItemAsSelected(ifcItem)
+			} else if (ifcItem === hoveredIfcItemRef.current) {
+				displayIfcItemAsHovered(ifcItem)
+			} else {
+				switch (modelVisibilityMode) {
+					case 'all': {
+						displayIfcItemAsDefault(ifcItem)
+						break
+					}
+					case 'transparent': {
+						if (ifcItem.userData.alwaysVisible || ifcItem.userData.selectable) {
+							displayIfcItemAsDefault(ifcItem)
+						} else {
+							displayIfcItemAsTransparent(ifcItem)
 						}
-						case ModelVisibilityMode.TRANSPARENT: {
-							if (isMeshAlwaysVisible(mesh) || isMeshSelectable(mesh)) {
-								restoreMeshMaterial(mesh)
-							} else {
-								setMeshToHalfTransparent(mesh)
-							}
-							break
+						break
+					}
+					case 'selectable': {
+						if (ifcItem.userData.alwaysVisible || ifcItem.userData.selectable) {
+							displayIfcItemAsDefault(ifcItem)
+						} else {
+							displayIfcItemAsHidden(ifcItem)
 						}
-						case ModelVisibilityMode.SELECTABLE: {
-							if (isMeshAlwaysVisible(mesh) || isMeshSelectable(mesh)) {
-								restoreMeshMaterial(mesh)
-							} else {
-								setMeshToHidden(mesh)
-							}
-							break
-						}
+						break
 					}
 				}
 			}
 		},
 		[
+			displayIfcItemAsDefault,
+			displayIfcItemAsHidden,
+			displayIfcItemAsHovered,
+			displayIfcItemAsSelected,
+			displayIfcItemAsTransparent,
 			modelVisibilityMode,
-			restoreMeshMaterial,
-			setMeshToHalfTransparent,
-			setMeshToHidden,
-			setMeshToHovered,
-			setMeshToSelected,
 		],
 	)
 
-	const updateMeshesVisibility = useCallback((): void => {
-		if (!modelRef.current) throw new Error('Model not loaded')
-
-		for (const object3d of modelRef.current.children) {
-			if (isLambertMesh(object3d)) {
-				updateMeshVisibility(object3d)
-			} else if (isGroup(object3d)) {
-				for (const mesh of object3d.children) {
-					if (isLambertMesh(mesh)) {
-						updateMeshVisibility(mesh)
-					}
-				}
-			}
+	const updateAllIfcItemVisiblity = useCallback(() => {
+		for (const ifcItem of modelRef.current.children) {
+			updateIfcItemVisibility(ifcItem)
 		}
+	}, [updateIfcItemVisibility])
 
-		renderScene()
-	}, [renderScene, updateMeshVisibility])
-
-	const selectByExpressId = (expressId: number | undefined): void => {
+	const selectIfcItemByExpressId = (expressId: number | undefined): void => {
 		if (!expressId) {
 			select()
 			return
 		}
-
-		if (!modelRef.current) throw new Error('Model not loaded')
-
-		const meshes = getAllMeshesByExpressId(modelRef.current, expressId)
-		selectedMeshesRef.current = meshes
-		updateMeshesVisibility()
+		const foundIfcItem = modelRef.current.children.find(ifcItem => ifcItem.userData.expressId === expressId)
+		select(foundIfcItem)
 		updateBoundingSphere()
 	}
 
 	const select = useCallback(
-		(selectedMesh?: IfcMesh): void => {
-			if (!modelRef.current) return
-
-			if (!selectedMesh) {
-				selectedMeshesRef.current.length = 0
-				updateMeshesVisibility()
-				updateBoundingSphere()
-				if (fullScreen) return
-				if (onMeshSelect) {
-					onMeshSelect()
-				}
-				return
-			}
-
-			const relatives = getRelativeMeshes(selectedMesh)
-			selectedMeshesRef.current = relatives
-
-			updateMeshesVisibility()
+		(ifcItem?: IfcItem): void => {
+			selectedIfcItemRef.current = ifcItem
+			updateAllIfcItemVisiblity()
 			updateBoundingSphere()
+			// if (fullScreen) return
 
-			if (fullScreen) return
-			const expressId = getMeshExpressId(selectedMesh)
-			if (onMeshSelect) onMeshSelect(selectedMesh, expressId)
+			if (onMeshSelect) {
+				onMeshSelect(ifcItem)
+			}
 		},
 
-		[fullScreen, onMeshSelect, updateBoundingSphere, updateMeshesVisibility],
+		[onMeshSelect, updateAllIfcItemVisiblity, updateBoundingSphere],
 	)
 
-	const hover = (hoveredMesh?: IfcMesh): void => {
-		if (!modelRef.current) return
+	const hover = (ifcItem?: IfcItem): void => {
+		hoveredIfcItemRef.current = ifcItem
+		updateAllIfcItemVisiblity()
+		// if (fullScreen) return
 
-		if (!hoveredMesh) {
-			hoveredMeshesRef.current.length = 0
-			updateMeshesVisibility()
-			return
+		if (onMeshHover) {
+			onMeshHover(ifcItem)
 		}
-
-		const relatives = getRelativeMeshes(hoveredMesh)
-		hoveredMeshesRef.current = relatives
-
-		updateMeshesVisibility()
-
-		const expressId = getMeshExpressId(hoveredMesh)
-		if (onMeshHover) onMeshHover(hoveredMesh, expressId)
 	}
 
 	const updateMousePointer = (event: MouseEvent): void => {
@@ -594,31 +444,36 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	}
 
 	const updateIntersections = (): void => {
-		if (!cameraRef.current || !sceneRef.current) throw new Error('Camera or scene not loaded')
+		if (!cameraRef.current) {
+			throw new Error('Camera not found')
+		}
 		rayCasterRef.current.setFromCamera(pointerRef.current, cameraRef.current)
 		const allIntersections = rayCasterRef.current.intersectObjects(sceneRef.current.children)
 		selectableIntersectionsRef.current = allIntersections.filter(intersection => {
-			return checkIfIsSelectable(intersection.object)
+			if (intersection.object instanceof IfcMesh) {
+				return intersection.object.parent.isSelectable
+			}
+			return false
 		}) as Intersection<IfcMesh>[]
 	}
 
-	const transformViewportPositionToScreenPosition = (position: Vector3): { x: number; y: number } => {
-		if (!cameraRef.current || !rendererRef.current) throw new Error('Camera or renderer not loaded')
-		const vector = position.clone()
-		vector.project(cameraRef.current)
+	// const transformViewportPositionToScreenPosition = (position: Vector3): { x: number; y: number } => {
+	// 	if (!cameraRef.current || !rendererRef.current) throw new Error('Camera or renderer not loaded')
+	// 	const vector = position.clone()
+	// 	vector.project(cameraRef.current)
 
-		// Make sure vector has values
-		vector.setX(vector.x || 0)
-		vector.setY(vector.y || 0)
-		vector.setZ(vector.z || 0)
+	// 	// Make sure vector has values
+	// 	vector.setX(vector.x || 0)
+	// 	vector.setY(vector.y || 0)
+	// 	vector.setZ(vector.z || 0)
 
-		const widthHalf = rendererRef.current.domElement.clientWidth / 2
-		const heightHalf = rendererRef.current.domElement.clientHeight / 2
+	// 	const widthHalf = rendererRef.current.domElement.clientWidth / 2
+	// 	const heightHalf = rendererRef.current.domElement.clientHeight / 2
 
-		const x = vector.x * widthHalf + widthHalf
-		const y = -(vector.y * heightHalf) + heightHalf
-		return { x, y }
-	}
+	// 	const x = vector.x * widthHalf + widthHalf
+	// 	const y = -(vector.y * heightHalf) + heightHalf
+	// 	return { x, y }
+	// }
 
 	const handleMouseLeave = (): void => {
 		hover()
@@ -652,14 +507,14 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		}
 
 		const firstIntersectedObject = selectableIntersectionsRef.current[0]?.object
-		const isSelectable = checkIfIsSelectable(firstIntersectedObject)
+		const ifcItem = firstIntersectedObject?.getIfcItem()
 
-		if (!isSelectable) {
+		if (!ifcItem?.isSelectable()) {
 			select()
 			return
 		}
 
-		select(firstIntersectedObject)
+		select(ifcItem)
 	}
 
 	const handleMouseMove = (event: MouseEvent<HTMLCanvasElement>): void => {
@@ -677,45 +532,47 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		const intersectedMesh =
 			selectableIntersectionsRef.current.length > 0 ? selectableIntersectionsRef.current[0]?.object : undefined
 
-		const isSelectable = checkIfIsSelectable(intersectedMesh)
+		const ifcItem = intersectedMesh?.getIfcItem()
 
-		if (!isSelectable) {
+		if (!ifcItem?.isSelectable()) {
 			hover()
 			return
 		}
 
-		hover(intersectedMesh)
+		hover(ifcItem)
 	}
 
 	const handleMoveAt = useCallback((): void => {
-		if (!boundingSphereRef.current || !cameraRef.current || !controlsRef.current) return
+		if (!boundingSphereRef.current) return
+		if (!cameraRef.current) {
+			throw new Error('Camera not found')
+		}
+		if (!controlsRef.current) {
+			throw new Error('Controls not found')
+		}
 		fitBoundingSphere(boundingSphereRef.current, cameraRef.current, controlsRef.current)
 		renderScene()
+		console.log('handle move render')
 	}, [renderScene])
 
 	const handleLookAt = (): void => {
-		if (!controlsRef.current || !boundingSphereRef.current) return
+		if (!boundingSphereRef.current) return
+		if (!controlsRef.current) {
+			throw new Error('Controls not found')
+		}
 		controlsRef.current.target.copy(boundingSphereRef.current.center)
 		renderScene()
-	}
-
-	const handleChangeQuality = (): void => {
-		setLowQuality(!lowQuality)
-		localStorage.setItem(LOW_QUALITY_KEY, lowQuality ? 'false' : 'true')
-		rendererRef.current?.setPixelRatio(
-			lowQuality ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio / 2, 1),
-		)
-		renderScene()
+		console.log('look at render')
 	}
 
 	const selectByProperty = useCallback(
-		(property: Property | undefined): IfcMesh | undefined => {
+		(property: Property | undefined): IfcItem | undefined => {
 			if (!property) {
 				select()
 				return undefined
 			}
 
-			const foundItems = findObjectsByIfcPropAndType(sceneRef.current, [property]) as IfcMesh[]
+			const foundItems = filterIfcItemsByPropertiesAndType(modelRef.current, [property])
 
 			if (foundItems.length === 0) return undefined
 			const foundItem = foundItems[0]
@@ -728,66 +585,20 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		[handleMoveAt, select],
 	)
 
-	const downloadFile = useCallback(async (downloadUrl: string): Promise<string> => {
-		setLoadingProgress({ step: 'DOWNLOADING' })
-		const response = await fetch(downloadUrl)
-		if (!response.ok) {
-			setLoadingProgress({ step: 'ERROR_DOWNLOAD' })
-			throw new Error('Failed to download the model')
-		}
-		const blob = await response.blob()
-		const finalUrl = URL.createObjectURL(blob)
-		return finalUrl
-	}, [])
-
 	const unloadEverything = useCallback((): void => {
 		disposeObjects(sceneRef.current)
 		if (animationFrameIdRef.current) {
 			cancelAnimationFrame(animationFrameIdRef.current)
 		}
-		if (rendererRef.current) {
-			rendererRef.current.dispose()
-		}
-
-		rendererRef.current = undefined
-		cameraRef.current = undefined
-		controlsRef.current = undefined
-		sceneRef.current = undefined
-		modelRef.current = undefined
+		rendererRef.current?.dispose()
 	}, [])
 
-	const loadData = (object: IfcObject | undefined): void => {
-		if (!object) return
-		if (!data) {
-			setLoadingProgress({ step: 'ERROR_DATA' })
-			throw new Error('Data not loaded')
-		}
-
-		const expressId = object.userData.expressId
-
-		const nodeData = data.find(node => node.expressId === expressId)
-
-		if (nodeData) {
-			object.userData = { ...object.userData, ...nodeData }
-		}
-
-		for (const child of object.children) {
-			loadData(child as IfcObject)
-		}
-	}
-
 	const loadFile = useCallback(async (): Promise<void> => {
-		if (!url) {
-			setLoadingProgress({ step: 'ERROR_URL' })
-			return
-		}
 		resetScene()
-		const modelUrl = await downloadFile(url)
-		ifcLoaderRef.current.load(
-			modelUrl,
-			ifc => {
-				if (!sceneRef.current) throw new Error('Scene not loaded')
-				modelRef.current = ifc.group
+		await loadIfc(
+			url,
+			model => {
+				modelRef.current = model
 				sceneRef.current.add(modelRef.current)
 
 				centerObject(modelRef.current)
@@ -796,155 +607,164 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 				sceneRef.current.updateMatrixWorld(true)
 
 				updateBoundingSphere()
-				if (boundingSphereRef.current && cameraRef.current && controlsRef.current) {
+
+				if (!cameraRef.current) {
+					throw new Error('Camera not found')
+				}
+				if (!controlsRef.current) {
+					throw new Error('Controls not found')
+				}
+
+				if (boundingSphereRef.current) {
 					fitBoundingSphere(boundingSphereRef.current, cameraRef.current, controlsRef.current)
 				}
 				renderScene()
+				console.log('on load render')
+
+				if (data) {
+					restoreData(modelRef.current, data)
+				} else {
+					setIfcData(
+						modelRef.current,
+						linksRequirements,
+						selectableRequirements,
+						alwaysVisibleRequirements,
+						anchorRequirements,
+					)
+				}
+				// generateAnchors()
+
+				console.log(modelRef.current)
+
+				if (onLoad) {
+					onLoad({
+						model: modelRef.current,
+						selectableItems: modelRef.current.children.filter(ifcItem => ifcItem.userData.selectable),
+						selectByExpressId: selectIfcItemByExpressId,
+						selectByProperty: selectByProperty,
+					})
+				}
 			},
 			event => {
-				setLoadingProgress({ step: 'LOADING_MODEL', loaded: event.loaded, total: event.total })
-				if (event.loaded === event.total) {
-					if (directSearch) {
-						setLoadingProgress({ step: 'GENERATING_DATA' })
-						generateUserData(
-							modelRef.current,
-							sceneRef.current,
-							selectablesRequirements,
-							alwaysVisibleRequirements,
-						)
-					} else {
-						setLoadingProgress({ step: 'LOADING_DATA' })
-						loadData(modelRef.current)
-					}
-					setLoadingProgress({ step: 'GENERATING_ANCHORS' })
-					generateAnchors()
-					const selectableMeshes = getSelectableMeshes(modelRef.current)
-					if (onLoaded)
-						onLoaded({
-							model: modelRef.current,
-							selectByProperty,
-							selectableMeshes,
-							selectByExpressId,
-						})
-				}
-				setLoadingProgress({ step: 'DONE' })
-				if (onLoad) onLoad(event)
-			},
-			error => {
-				const e = error as Error
-				console.error(e)
-				setLoadingProgress({ step: 'ERROR' })
+				console.log(`${String(event.loaded)}/${String(event.total)}`)
 				renderScene()
 			},
+			error => {
+				console.error(error)
+				renderScene()
+				console.log('error render')
+			},
+			Boolean(data),
 		)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [url])
 
 	const handleChangeModelVisibilityMode = (): void => {
 		switch (modelVisibilityMode) {
-			case ModelVisibilityMode.SELECTABLE: {
-				setModelVisibilityMode(ModelVisibilityMode.ALL)
+			case 'selectable': {
+				setModelVisibilityMode('all')
 				break
 			}
-			case ModelVisibilityMode.ALL: {
-				setModelVisibilityMode(ModelVisibilityMode.TRANSPARENT)
+			case 'all': {
+				setModelVisibilityMode('transparent')
 				break
 			}
-			case ModelVisibilityMode.TRANSPARENT: {
-				setModelVisibilityMode(ModelVisibilityMode.SELECTABLE)
+			case 'transparent': {
+				setModelVisibilityMode('selectable')
 				break
 			}
 		}
 	}
 
-	useEffect(() => {
-		setAnchors(anchorsList => {
-			const newAnchors: Anchor[] = []
+	// useEffect(() => {
+	// 	setAnchors(anchorsList => {
+	// 		const newAnchors: Anchor[] = []
 
-			for (const anchor of anchorsList) {
-				const newAnchor = {
-					...anchor,
-					visible: visibleMarkers?.map(vm => vm.id).includes(anchor.id) || false,
-					children: visibleMarkers?.find(vm => vm.id === anchor.id)?.content || anchor.children,
-				}
-				newAnchors.push(newAnchor)
-			}
+	// 		for (const anchor of anchorsList) {
+	// 			const newAnchor = {
+	// 				...anchor,
+	// 				visible: visibleMarkers?.map(vm => vm.id).includes(anchor.id) || false,
+	// 				children: visibleMarkers?.find(vm => vm.id === anchor.id)?.content || anchor.children,
+	// 			}
+	// 			newAnchors.push(newAnchor)
+	// 		}
 
-			return newAnchors
-		})
-	}, [visibleMarkers])
+	// 		return newAnchors
+	// 	})
+	// }, [visibleMarkers])
 
-	useEffect(() => {
-		if (statusRef.current === 'NOT_INITIALIZED') return
-		updateMeshesVisibility()
-	}, [updateMeshesVisibility])
+	// useEffect(() => {
+	// 	if (statusRef.current === 'NOT_INITIALIZED') return
+	// 	updateMeshesVisibility()
+	// }, [updateMeshesVisibility])
 
-	useEffect(() => {
-		updateAnchors()
-	}, [updateAnchors, visibleMarkers])
+	// useEffect(() => {
+	// 	updateAnchors()
+	// }, [updateAnchors, visibleMarkers])
 
-	//init
-	useEffect(() => {
-		if (!innerRef.current || !canvasRef.current) return
+	//init graphics
+	useLayoutEffect(() => {
+		if (!canvasRef.current) {
+			throw new Error('Canvas not found')
+		}
+		console.log('graphic init')
 		const canvas = canvasRef.current
-
 		// Renderer
-		const renderer = new WebGLRenderer({
+		rendererRef.current = new WebGLRenderer({
 			canvas: canvasRef.current,
 			antialias: true,
 			alpha: true,
 		})
-		renderer.setPixelRatio(
-			lowQuality ? Math.min(window.devicePixelRatio / 2, 1) : Math.min(window.devicePixelRatio, 2),
-		)
-		renderer.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight)
-		rendererRef.current = renderer
+		const renderer = rendererRef.current
+		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+		renderer.setSize(canvas.clientWidth, canvas.clientHeight)
 		renderer.setClearColor(0x000000, 0)
-
-		// Scene
-		// sceneRef.current.background = new Color('transparent')
-		const scene = new Scene() as IfcScene
-		sceneRef.current = scene
-
 		// Camera
-		const camera = new PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 1000)
-		camera.position.set(10, 20, 20)
+		cameraRef.current = new PerspectiveCamera()
+		const camera = cameraRef.current
+		camera.fov = 45
+		camera.aspect = canvasRef.current.clientWidth / canvas.clientHeight
+		camera.near = 0.1
 		camera.far = 5000
+		camera.position.set(10, 20, 20)
 		camera.updateProjectionMatrix()
-		scene.add(camera)
 		camera.layers.set(LAYER_MESHES)
 		camera.layers.enable(LAYER_HELPERS)
 		cameraRef.current = camera
-
+		sceneRef.current.add(camera)
 		// Controls
-		const controls = new OrbitControls(camera, canvas)
+		controlsRef.current = new OrbitControls(cameraRef.current, rendererRef.current.domElement)
+		const controls = controlsRef.current
 		controls.enableDamping = true
 		controls.maxPolarAngle = Math.PI / 2
-		controlsRef.current = controls
-
-		// IFC Loader
-		const wasmPath = `${location.origin}/wasm/`
-		ifcLoaderRef.current.ifcAPI.SetWasmPath(wasmPath, true)
-
 		// Raycaster
 		rayCasterRef.current.layers.set(LAYER_MESHES)
+	}, [])
+
+	//init
+	useEffect(() => {
+		if (!containerRef.current) {
+			throw new Error('Container not found')
+		}
 
 		resetScene()
 
 		const animate = (): void => {
+			console.log('animate render')
 			// if (shouldRerenderRef.current) {
-			updateAnchors()
+			// updateAnchors()
 			renderScene()
-			// }
 			animationFrameIdRef.current = requestAnimationFrame(animate)
+			// }
 		}
 		animate()
 
 		const resizeObserver = new ResizeObserver(() => {
+			console.log('resize observer render')
 			renderScene()
 		})
 
-		resizeObserver.observe(innerRef.current)
+		resizeObserver.observe(containerRef.current)
 
 		statusRef.current = 'READY'
 
@@ -958,12 +778,13 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 
 	useEffect(() => {
 		if (statusRef.current === 'NOT_INITIALIZED') return
-		setLoadingProgress({ step: 'IDLE', loaded: 0, total: 1000000 })
 		loadFile()
 			.then(() => {
+				console.log('MODEL_LOADED')
 				statusRef.current = 'MODEL_LOADED'
 			})
 			.catch((error: unknown) => {
+				console.log('NOT_INITIALIZED')
 				statusRef.current = 'NOT_INITIALIZED'
 				console.error(error)
 			})
@@ -977,7 +798,7 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 					: 'relative min-h-80 overflow-hidden rounded-lg',
 				className,
 			)}
-			ref={innerRef}
+			ref={containerRef}
 			{...otherProps}
 		>
 			<canvas
@@ -1001,42 +822,35 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 			)} */}
 			<div className="absolute right-4 top-4 z-10 flex flex-col gap-4">
 				<div className="flex flex-wrap gap-4">
-					<button title="Guarda verso" type="button" onClick={handleLookAt} disabled={isLoading}>
+					<button title="Guarda verso" type="button" onClick={handleLookAt}>
 						<EyeIcon className="size-6" />
 					</button>
-					<button title="Muovi verso" type="button" onClick={handleMoveAt} disabled={isLoading}>
+					<button title="Muovi verso" type="button" onClick={handleMoveAt}>
 						<ArrowUpIcon className="size-6" />
 					</button>
-					<button
-						title="Cambia qualità visiva"
-						type="button"
-						onClick={handleChangeQuality}
-						disabled={isLoading}
-					>
-						{lowQuality ? <TurtleIcon className="size-6" /> : <RabbitIcon className="size-6" />}
-					</button>
+
 					<button
 						title={fullScreen ? 'Esci da modalità schermo intero' : 'Modalità a schermo intero'}
 						type="button"
-						disabled={isLoading}
+						// disabled={isLoading}
 						onClick={() => {
 							setFullScreen(prev => !prev)
 						}}
 					>
 						{fullScreen ? <Minimize2Icon className="size-6" /> : <FullscreenIcon className="size-6" />}
 					</button>
-					<Button
+					<button
 						title="Cambia modalità visualizzazione meshes"
 						type="button"
-						disabled={isLoading}
+						// disabled={isLoading}
 						onClick={handleChangeModelVisibilityMode}
 					>
 						{(() => {
 							switch (modelVisibilityMode) {
-								case ModelVisibilityMode.ALL: {
+								case 'all': {
 									return <HouseIcon className="size-6" />
 								}
-								case ModelVisibilityMode.TRANSPARENT: {
+								case 'transparent': {
 									return (
 										<div className="relative">
 											<HouseIcon className="absolute inset-0 size-6 opacity-30" />
@@ -1044,17 +858,17 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 										</div>
 									)
 								}
-								case ModelVisibilityMode.SELECTABLE: {
+								case 'selectable': {
 									return <BarChart2 className="size-6" />
 								}
 							}
 						})()}
-					</Button>
+					</button>
 				</div>
 			</div>
-			{loadingProgress.step === 'DONE' ? null : (
+			{/* {loadingProgress.step === 'DONE' ? null : (
 				<div className={clsx('absolute inset-0 z-10 flex flex-col items-center justify-center')}>
-					{/* <ProgressBar
+					<ProgressBar
 						max={loadingProgress.total}
 						value={loadingProgress.loaded}
 						size="large"
@@ -1062,13 +876,13 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 						className="max-w-[80%]"
 					>
 						{messages[loadingProgress.step]}
-					</ProgressBar> */}
+					</ProgressBar>
 				</div>
-			)}
+			)} */}
 		</div>
 	)
 })
 
 IfcViewer.displayName = 'IfcViewer'
 
-export { IfcViewer as Model3DViewer, type IfcViewerProps as Model3DViewerProps, type On3DModelLoadedType }
+export { IfcViewer, type IfcViewerProps, type On3DModelLoadedType }

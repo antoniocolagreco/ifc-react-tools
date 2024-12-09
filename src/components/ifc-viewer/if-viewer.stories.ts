@@ -1,45 +1,24 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { Button, type ButtonProps } from './button'
+import { IfcViewer, type IfcViewerProps } from './ifc-viewer'
 
 const meta = {
-	title: 'Components/Button',
-	component: Button,
-	parameters: {
-		layout: 'centered',
-	},
+	title: 'Components/IFC Viewer',
+	component: IfcViewer,
+	parameters: {},
 	tags: ['autodocs'],
-	argTypes: {
-		color: {
-			options: ['primary', 'success', 'info', 'warning', 'error'],
-			control: { type: 'select' },
-		},
-		size: {
-			options: ['small', 'medium', 'large'],
-			control: { type: 'select' },
-		},
-	},
-} satisfies Meta<typeof Button>
+	argTypes: {},
+} satisfies Meta<typeof IfcViewer>
 
 export default meta
 
 type Story = StoryObj<typeof meta>
 
-const defaultProps: ButtonProps = {
-	color: 'primary',
-	size: 'medium',
+const defaultProps: IfcViewerProps = {
+	url: '/test/castle.ifc',
 }
 
-export const DefaultButton: Story = {
+export const DefaultViewer: Story = {
 	args: {
 		...defaultProps,
-		children: 'Click Me!',
-	},
-}
-
-export const DisabledButton: Story = {
-	args: {
-		...defaultProps,
-		children: 'Click Me!',
-		disabled: true,
 	},
 }
