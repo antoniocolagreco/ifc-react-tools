@@ -3,14 +3,14 @@ import { IfcProgressEvent } from '@/classes/ifc-progress-event'
 import path from 'node:path'
 import { Group } from 'three'
 import { describe, expect, it } from 'vitest'
-import { loadIfc } from './load-ifc'
+import { loadIfcFile } from './ifc-loader'
 
 describe('load-ifc', () => {
 	it('should load the file', async () => {
 		const url = path.resolve('public/test/', 'castle.ifc')
 		let lastEvent: IfcProgressEvent = new IfcProgressEvent()
 
-		await loadIfc(
+		await loadIfcFile(
 			url,
 			() => {},
 			event => {
@@ -28,7 +28,7 @@ describe('load-ifc', () => {
 		const url = path.resolve('public/test/', 'castle.ifc')
 		let loadedModel: IfcModel | undefined
 
-		await loadIfc(
+		await loadIfcFile(
 			url,
 			model => {
 				loadedModel = model

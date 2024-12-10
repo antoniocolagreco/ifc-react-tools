@@ -1,0 +1,27 @@
+.marker {
+	position: absolute;
+	width: 32px;
+	height: 32px;
+	display: flex;
+	place-content: center;
+	border-width: 2px;
+	border-radius: 50%;
+	background-color: transparent;
+	border-color: #737373;
+}
+
+.marker .blue {
+	border-color: #2563eb;
+}
+
+.marker .green {
+	border-color: #16a34a;
+}
+
+.marker .yellow {
+	border-color: #eab308;
+}
+
+.marker .red {
+	border-color: #dc2626;
+}

@@ -9,67 +9,99 @@ import type {
 	Requirements,
 	SelectableRequirements,
 } from '@/types/types'
-import { IFC2X3, IFCRELDEFINESBYPROPERTIES, type Handle, type IFC4X3, type IfcAPI } from 'web-ifc'
+import {
+	IFC2X3,
+	IFCRELAGGREGATES,
+	IFCRELASSIGNS,
+	IFCRELDEFINESBYPROPERTIES,
+	IFCRELDEFINESBYTYPE,
+	type Handle,
+	type IfcAPI,
+} from 'web-ifc'
 
 /**
- * Sets the type and properties of an IFC item.
+ * Sets the type and properties of an IFC item using the provided IFC API.
  *
- * @param ifcAPI - The IFC API instance used to interact with the IFC model.
+ * @param ifcAPI - The IFC API instance used to retrieve IFC data.
  * @param modelID - The ID of the IFC model.
- * @param ifcItem - The IFC item to set the type and properties for.
- * @param deep - A boolean indicating whether to perform a deep retrieval of properties. Defaults to `false`.
+ * @param ifcItem - The IFC item whose type and properties are to be set.
  *
- * This function retrieves the type and properties of the specified IFC item from the IFC model using the provided IFC API instance.
- * It updates the `userData` of the `ifcItem` with the retrieved type, name, and properties.
+ * This function retrieves the type and properties of an IFC item based on its express ID.
+ * It collects all relevant relationships (IfcRelDefines, IfcRelAggregates, IfcRelAssigns) and processes
+ * them to extract property sets. The extracted properties are then assigned to the `userData` of the IFC item.
  *
- * The function performs the following steps:
- * 1. Retrieves the IFC line data for the given `expressId` of the `ifcItem`.
- * 2. Determines the type of the IFC item using the `GetNameFromTypeCode` method of the `ifcAPI`.
- * 3. Collects the relations defined by properties or type from the IFC line data.
- * 4. Iterates through the relations to retrieve property sets and their properties.
- * 5. Updates the `userData` of the `ifcItem` with the retrieved type, name, and properties.
  */
-const setIfcItemTypeAndProperties = (ifcAPI: IfcAPI, modelID: number, ifcItem: IfcItem, deep = false): void => {
+const setIfcItemTypeAndProperties = (ifcAPI: IfcAPI, modelID: number, ifcItem: IfcItem): void => {
 	const { expressId } = ifcItem.userData
 	const data = ifcAPI.GetLine(modelID, expressId, true, true) as IFC2X3.IfcBuildingElement
 	const type = ifcAPI.GetNameFromTypeCode(data.type)
 
-	const relations: (IFC2X3.IfcRelDefinesByProperties | IFC2X3.IfcRelDefinesByType)[] = []
+	// Array per raccogliere tutte le relazioni trovate
+	const relations: (IFC2X3.IfcRelDefines | IFC2X3.IfcRelAggregates | IFC2X3.IfcRelAssigns)[] = []
 
 	if (data.IsDefinedBy) {
-		relations.push(...(data.IsDefinedBy as (IFC2X3.IfcRelDefinesByProperties | IFC2X3.IfcRelDefinesByType)[]))
+		relations.push(...(data.IsDefinedBy as IFC2X3.IfcRelDefines[]))
+	}
+
+	if (data.Decomposes) {
+		relations.push(...(data.Decomposes as IFC2X3.IfcRelAggregates[]))
+	}
+
+	if (data.HasAssignments) {
+		relations.push(...(data.HasAssignments as IFC2X3.IfcRelAssigns[]))
 	}
 
 	const propertySets: PropertySet[] = []
+
 	for (const relation of relations) {
-		// if (relation.type === IFCRELDEFINESBYTYPE) {
-		// const relationDefinesByType = relation as IFC2X3.IfcRelDefinesByType
-		// const handle = relationDefinesByType.RelatingType as Handle<IFC2X3.IfcTypeObject>
-		// const typeObjectLine = ifcAPI.GetLine(modelID, handle.value, true, true) as IFC2X3.IfcTypeObject
-		// const typeName = typeObjectLine.Name?.value
-		// categories.push(typeName)
-		// }
-		if (relation.type === IFCRELDEFINESBYPROPERTIES) {
-			const relationDefinesByProperties = relation as IFC2X3.IfcRelDefinesByProperties
-			const handle = relationDefinesByProperties.RelatingPropertyDefinition as Handle<IFC2X3.IfcPropertySet>
-			const propertySetLine = ifcAPI.GetLine(modelID, handle.value, true, deep) as
-				| IFC2X3.IfcPropertySet
-				| IFC4X3.IfcProfileDef
+		switch (relation.type) {
+			case IFCRELDEFINESBYPROPERTIES: {
+				const relationDefinesByProperties = relation as IFC2X3.IfcRelDefinesByProperties
+				const handle = relationDefinesByProperties.RelatingPropertyDefinition as Handle<IFC2X3.IfcPropertySet>
+				const propertySetLine = ifcAPI.GetLine(modelID, handle.value, true) as IFC2X3.IfcPropertySet
 
-			if (!(propertySetLine instanceof IFC2X3.IfcPropertySet)) continue
+				if (propertySetLine instanceof IFC2X3.IfcPropertySet) {
+					const properties = propertySetLine.HasProperties.map(prop => {
+						const propertySingleValue = prop as IFC2X3.IfcPropertySingleValue
+						return {
+							name: propertySingleValue.Name.value,
+							value: propertySingleValue.NominalValue?.value,
+						}
+					})
 
-			const properties = []
-			for (const prop of propertySetLine.HasProperties) {
-				const propertySigleValue = prop as IFC2X3.IfcPropertySingleValue
-				const property = {
-					name: propertySigleValue.Name.value,
-					value: propertySigleValue.NominalValue?.value,
+					const propertySet = { name: propertySetLine.Name?.value, properties }
+					propertySets.push(propertySet)
 				}
-				properties.push(property)
+				break
 			}
-
-			const propertySet = { name: propertySetLine.Name?.value, properties }
-			propertySets.push(propertySet)
+			case IFCRELDEFINESBYTYPE: {
+				// const relationDefinesByType = relation as IFC2X3.IfcRelDefinesByType
+				// const relatedObjectsHandles = relationDefinesByType.RelatedObjects as Handle<IFC2X3.IfcObject>[]
+				// const relatedTypeHandle = relationDefinesByType.RelatingType as Handle<IFC2X3.IfcTypeObject>
+				// console.log('IFCRELDEFINESBYTYPE', relationDefinesByType.Name?.value)
+				console.log(`Skipping IFCRELDEFINESBYTYPE`, relation.expressID)
+				break
+			}
+			case IFCRELAGGREGATES: {
+				// const relationAggregates = relation as IFC2X3.IfcRelAggregates
+				// const relatedObjectsHandles = relationAggregates.RelatedObjects as Handle<IFC2X3.IfcObjectDefinition>[]
+				// const relatingObjectHandle = relationAggregates.RelatingObject as Handle<IFC2X3.IfcObjectDefinition>
+				// console.log('IFCRELAGGREGATES', relationAggregates.Name?.value)
+				console.log(`Skipping IFCRELAGGREGATES`, relation.expressID)
+				break
+			}
+			case IFCRELASSIGNS: {
+				// const relationAssigns = relation as IFC2X3.IfcRelAssigns
+				// const relatedObjectsHandles = relationAssigns.RelatedObjects as Handle<IFC2X3.IfcObjectDefinition>[]
+				// const relatingObjectEnum = relationAssigns.RelatedObjectsType as IFC2X3.IfcObjectTypeEnum
+				// console.log('IFCRELASSIGNS', relationAssigns.Name?.value)
+				console.log(`Skipping IFCRELAGGREGATES`, relation.expressID)
+				break
+			}
+			default: {
+				console.log(`Skipping ${String(relation.type)}`, relation.expressID)
+				break
+			}
 		}
 	}
 
@@ -365,6 +397,7 @@ const setIfcData = (
 	alwaysVisibleRequirement?: Requirements[],
 	anchorsRequirement?: Requirements[],
 ) => {
+	console.log('Setting IFC data')
 	for (const ifcItem of ifcModel.children) {
 		if (linkRequirements) {
 			setIfcItemLinks(ifcItem, ifcModel, linkRequirements)

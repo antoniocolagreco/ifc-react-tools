@@ -1,0 +1,12 @@
+.ifc-viewer {
+	position: relative;
+	min-width: 280px;
+	min-height: 280px;
+}
+
+.ifc-viewer canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}

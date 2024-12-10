@@ -22,7 +22,7 @@ type LoadIfcFunctionType = (
 	loadProperties?: boolean,
 ) => Promise<void>
 
-const loadIfc: LoadIfcFunctionType = async (url: string, onLoad, onProgress, onError, loadProperties = true) => {
+const loadIfcFile: LoadIfcFunctionType = async (url: string, onLoad, onProgress, onError, loadProperties = true) => {
 	const ifcAPI = new IfcAPI()
 	const ifcModel = new IfcModel()
 
@@ -32,7 +32,7 @@ const loadIfc: LoadIfcFunctionType = async (url: string, onLoad, onProgress, onE
 
 	try {
 		const wasmPath = {
-			path: isRunningInBrowser() ? `${location.origin}/wasm/0.66/` : 'public/wasm/0.66/',
+			path: isRunningInBrowser() ? `${location.origin}/wasm/` : 'public/wasm/',
 			absolute: true,
 		}
 
@@ -95,4 +95,4 @@ const loadIfc: LoadIfcFunctionType = async (url: string, onLoad, onProgress, onE
 	}
 }
 
-export { loadIfc }
+export { loadIfcFile }

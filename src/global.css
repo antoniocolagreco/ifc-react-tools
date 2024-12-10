@@ -1,3 +1,5 @@
+@import './components/ifc-viewer/ifc-viewer.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

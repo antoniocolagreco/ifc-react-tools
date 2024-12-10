@@ -5,22 +5,21 @@ import type IfcItem from '@/classes/ifc-item'
 import IfcMesh from '@/classes/ifc-mesh'
 import IfcModel from '@/classes/ifc-model'
 import type { MouseState } from '@/types/mouse-status'
-import type { IfcViewerVisibilityMode } from '@/types/visibility-mode'
 import { filterIfcItemsByPropertiesAndType, setIfcData } from '@/utils/ifc/properties-util'
 import { restoreData } from '@/utils/ifc/save-utils/save-util'
+import alignObject from '@/utils/three/align-object/align-object'
 import { createBoundingSphere, createSphereMesh, fitBoundingSphere } from '@/utils/three/camera-utils'
-import { centerObject } from '@/utils/three/center-object'
 import { disposeObjects } from '@/utils/three/dispose-utils'
-import { loadIfc } from '@/utils/three/load-ifc'
+import { loadIfcFile } from '@/utils/three/ifc-loader'
 import clsx from 'clsx'
-import { ArrowUpIcon, BarChart2, EyeIcon, FullscreenIcon, HouseIcon, Minimize2Icon } from 'lucide-react'
+import { ArrowUpIcon, BarChart2, EyeIcon, HouseIcon } from 'lucide-react'
 import {
 	forwardRef,
 	useCallback,
 	useEffect,
-	useLayoutEffect,
 	useRef,
 	useState,
+	type CSSProperties,
 	type HTMLAttributes,
 	type MouseEvent,
 } from 'react'
@@ -45,6 +44,8 @@ import {
 	type Sphere,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/Addons.js'
+import './ifc-viewer.css'
+import type { VisibleMarker } from '@/types/visible-marker'
 
 const LAYER_MESHES = 0
 const LAYER_HELPERS = 29
@@ -56,13 +57,19 @@ type On3DModelLoadedType = (ifc: {
 	selectByExpressId: (expressId: number | undefined) => void
 }) => void
 
+type ViewMode = 'VIEW_MODE_ALL' | 'VIEW_MODE_TRANSPARENT' | 'VIEW_MODE_SELECTABLE'
+type Status = 'NOT_INITIALIZED' | 'READY' | 'MODEL_LOADED' | 'ERROR'
+
 type IfcViewerProps = HTMLAttributes<HTMLDivElement> & {
 	url: string
 	data?: IfcData
 
+	hoverColor: number
+	selectedColor: number
+
 	onLoad?: On3DModelLoadedType
 
-	// visibleMarkers?: VisibleMarker[]
+	visibleMarkers?: VisibleMarker[]
 
 	links?: LinkRequirements[]
 	selectable?: SelectableRequirements[]
@@ -84,6 +91,9 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	const {
 		url,
 		data,
+
+		hoverColor = 0x00498a,
+		selectedColor = 0x16a34a,
 
 		onLoad,
 
@@ -124,17 +134,34 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	const boundingSphereMeshRef = useRef<LambertMesh>()
 
 	const selectedIfcItemRef = useRef<IfcItem>()
+	const previousSelectedIfcItemRef = useRef<IfcItem>()
 	const hoveredIfcItemRef = useRef<IfcItem>()
+	const previousHoveredIfcItemRef = useRef<IfcItem>()
 	// const originalMaterialsRef = useRef<Map<Mesh, MeshLambertMaterial | ShaderMaterial>>(new Map())
 
 	const selectableIntersectionsRef = useRef<Intersection<IfcMesh>[]>([])
-	const statusRef = useRef<'NOT_INITIALIZED' | 'READY' | 'MODEL_LOADED'>('NOT_INITIALIZED')
+	const statusRef = useRef<Status>('NOT_INITIALIZED')
 	const mouseStatusRef = useRef<MouseState>({ clicked: false, x: 0, y: 0 })
 
-	const shouldRerenderRef = useRef(false)
-	const shouldRerenderTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
-	const [fullScreen, setFullScreen] = useState(false)
-	const [modelVisibilityMode, setModelVisibilityMode] = useState<IfcViewerVisibilityMode>('all')
+	const resizeObserverRef = useRef<ResizeObserver>()
+
+	const renderingEnabledRef = useRef(false)
+	const renderingTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+
+	const [viewMode, setViewMode] = useState<ViewMode>('VIEW_MODE_ALL')
+	const viewModeRef = useRef<ViewMode>(viewMode)
+
+	const [cursorStyle, setCursorStyle] = useState<CSSProperties>({ cursor: 'default' })
+
+	useEffect(() => {
+		if (ref) {
+			if (typeof ref === 'function') {
+				ref(containerRef.current)
+			} else {
+				ref.current = containerRef.current
+			}
+		}
+	}, [ref])
 
 	// const [anchors, setAnchors] = useState<Anchor[]>([])
 
@@ -253,7 +280,7 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	// 	setAnchors(newAnchors)
 	// }, [directSearch, generateAnchorPositionsFromValues, generateAnchorsPositionsFromProperties, visibleMarkers])
 
-	const renderScene = useCallback((): void => {
+	const renderScene = (): void => {
 		if (!containerRef.current || !rendererRef.current || !cameraRef.current || !controlsRef.current) {
 			return
 		}
@@ -265,9 +292,9 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		rendererRef.current.setSize(width, height)
 		controlsRef.current.update()
 		rendererRef.current.render(sceneRef.current, cameraRef.current)
-	}, [])
+	}
 
-	const resetScene = useCallback((): void => {
+	const resetScene = (): void => {
 		disposeObjects(sceneRef.current)
 		sceneRef.current.children.length = 0
 
@@ -282,7 +309,7 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		grid.position.y = -0.3
 		grid.layers.set(LAYER_HELPERS)
 		sceneRef.current.add(grid)
-	}, [])
+	}
 
 	const updateBoundingSphere = useCallback((): void => {
 		const meshes: IfcMesh[] = selectedIfcItemRef.current?.children ?? modelRef.current.getAllMeshes()
@@ -300,137 +327,183 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		sceneRef.current.add(boundingSphereMeshRef.current)
 	}, [showBoundingSphere])
 
-	const displayIfcItemAsSelected = useCallback((ifcItem: IfcItem): void => {
+	const displayItemAsSelected = useCallback(
+		(ifcItem: IfcItem): void => {
+			ifcItem.visible = true
+			for (const ifcMesh of ifcItem.children) {
+				let selectedMaterial = modelRef.current.getSelectMaterial(ifcMesh.userData.materialId)
+				if (!selectedMaterial) {
+					selectedMaterial = new MeshLambertMaterial()
+					modelRef.current.setSelectMaterial(ifcMesh.userData.materialId, selectedMaterial)
+				}
+				selectedMaterial.transparent = false
+				selectedMaterial.emissive.setHex(selectedColor)
+				selectedMaterial.color.setHex(selectedColor)
+				selectedMaterial.depthTest = false
+				ifcMesh.material = selectedMaterial
+				ifcMesh.renderOrder = 1
+			}
+		},
+		[selectedColor],
+	)
+
+	const displayItemAsHovered = useCallback(
+		(ifcItem: IfcItem): void => {
+			ifcItem.visible = true
+
+			for (const ifcMesh of ifcItem.children) {
+				let hoveredMaterial = modelRef.current.getHoverMaterial(ifcMesh.userData.materialId)
+				if (!hoveredMaterial) {
+					hoveredMaterial = new MeshLambertMaterial()
+					modelRef.current.setHoverMaterial(ifcMesh.userData.materialId, hoveredMaterial)
+				}
+				hoveredMaterial.opacity = 1
+				hoveredMaterial.transparent = false
+				hoveredMaterial.emissive.setHex(hoverColor)
+				hoveredMaterial.color.setHex(hoverColor)
+				hoveredMaterial.depthTest = false
+				ifcMesh.material = hoveredMaterial
+				ifcMesh.renderOrder = 1
+			}
+		},
+		[hoverColor],
+	)
+
+	const displayItemAsTransparent = (ifcItem: IfcItem): void => {
 		ifcItem.visible = true
 
 		for (const ifcMesh of ifcItem.children) {
-			const selectedMaterial = new MeshLambertMaterial()
-			selectedMaterial.copy(ifcMesh.material)
-			selectedMaterial.emissive.setHex(0x16a34a)
-			selectedMaterial.depthTest = false
-			ifcMesh.material = selectedMaterial
-		}
-	}, [])
-
-	const displayIfcItemAsHovered = useCallback((ifcItem: IfcItem): void => {
-		ifcItem.visible = true
-
-		for (const ifcMesh of ifcItem.children) {
-			const hoveredMaterial = new MeshLambertMaterial()
-			hoveredMaterial.copy(ifcMesh.material)
-			hoveredMaterial.emissive.setHex(0x00498a)
-			hoveredMaterial.depthTest = false
-			ifcMesh.material = hoveredMaterial
-		}
-	}, [])
-
-	const displayIfcItemAsTransparent = useCallback((ifcItem: IfcItem): void => {
-		ifcItem.visible = true
-
-		for (const ifcMesh of ifcItem.children) {
+			const originalMaterial = modelRef.current.getItemMaterial(ifcMesh.userData.materialId)
 			const transparentMaterial = new MeshLambertMaterial()
-			transparentMaterial.copy(ifcMesh.material)
+			if (originalMaterial) {
+				transparentMaterial.copy(originalMaterial)
+			} else {
+				transparentMaterial.copy(ifcMesh.material)
+			}
 			transparentMaterial.transparent = true
 			transparentMaterial.opacity = 0.3
+			transparentMaterial.depthTest = false
+			transparentMaterial.depthWrite = false
 			ifcMesh.material = transparentMaterial
+			ifcMesh.renderOrder = 0
 		}
-	}, [])
+	}
 
-	const displayIfcItemAsDefault = useCallback((ifcItem: IfcItem): void => {
+	const displayItemAsOriginal = (ifcItem: IfcItem): void => {
 		ifcItem.visible = true
 		for (const ifcMesh of ifcItem.children) {
 			const originalMaterial = modelRef.current.getItemMaterial(ifcMesh.userData.materialId)
 			if (originalMaterial) {
 				ifcMesh.material = originalMaterial
 			}
+			ifcMesh.renderOrder = 0
 		}
-	}, [])
+	}
 
-	const displayIfcItemAsHidden = useCallback((ifcItem: IfcItem): void => {
+	const displayItemAsHidden = (ifcItem: IfcItem): void => {
 		ifcItem.visible = false
-	}, [])
+	}
 
-	const updateIfcItemVisibility = useCallback(
+	const updateMeshDisplay = useCallback(
 		(ifcItem: IfcItem) => {
 			if (ifcItem === selectedIfcItemRef.current) {
-				displayIfcItemAsSelected(ifcItem)
+				displayItemAsSelected(ifcItem)
 			} else if (ifcItem === hoveredIfcItemRef.current) {
-				displayIfcItemAsHovered(ifcItem)
+				displayItemAsHovered(ifcItem)
 			} else {
-				switch (modelVisibilityMode) {
-					case 'all': {
-						displayIfcItemAsDefault(ifcItem)
+				switch (viewModeRef.current) {
+					case 'VIEW_MODE_ALL': {
+						displayItemAsOriginal(ifcItem)
 						break
 					}
-					case 'transparent': {
-						if (ifcItem.userData.alwaysVisible || ifcItem.userData.selectable) {
-							displayIfcItemAsDefault(ifcItem)
+					case 'VIEW_MODE_TRANSPARENT': {
+						if (ifcItem.userData.alwaysVisible) {
+							displayItemAsOriginal(ifcItem)
 						} else {
-							displayIfcItemAsTransparent(ifcItem)
+							displayItemAsTransparent(ifcItem)
 						}
 						break
 					}
-					case 'selectable': {
-						if (ifcItem.userData.alwaysVisible || ifcItem.userData.selectable) {
-							displayIfcItemAsDefault(ifcItem)
+					case 'VIEW_MODE_SELECTABLE': {
+						if (ifcItem.userData.alwaysVisible) {
+							displayItemAsOriginal(ifcItem)
 						} else {
-							displayIfcItemAsHidden(ifcItem)
+							displayItemAsHidden(ifcItem)
 						}
 						break
 					}
 				}
 			}
 		},
-		[
-			displayIfcItemAsDefault,
-			displayIfcItemAsHidden,
-			displayIfcItemAsHovered,
-			displayIfcItemAsSelected,
-			displayIfcItemAsTransparent,
-			modelVisibilityMode,
-		],
+		[displayItemAsHovered, displayItemAsSelected],
 	)
 
-	const updateAllIfcItemVisiblity = useCallback(() => {
+	const updateAllMeshesDisplay = useCallback(() => {
 		for (const ifcItem of modelRef.current.children) {
-			updateIfcItemVisibility(ifcItem)
+			updateMeshDisplay(ifcItem)
 		}
-	}, [updateIfcItemVisibility])
+	}, [updateMeshDisplay])
 
-	const selectIfcItemByExpressId = (expressId: number | undefined): void => {
-		if (!expressId) {
-			select()
-			return
+	const switchSelectedMesh = useCallback(() => {
+		if (previousSelectedIfcItemRef.current) {
+			updateMeshDisplay(previousSelectedIfcItemRef.current)
 		}
-		const foundIfcItem = modelRef.current.children.find(ifcItem => ifcItem.userData.expressId === expressId)
-		select(foundIfcItem)
-		updateBoundingSphere()
-	}
+		if (selectedIfcItemRef.current) {
+			updateMeshDisplay(selectedIfcItemRef.current)
+		}
+	}, [updateMeshDisplay])
+
+	const switchHoveredMesh = useCallback(() => {
+		if (previousHoveredIfcItemRef.current) {
+			updateMeshDisplay(previousHoveredIfcItemRef.current)
+		}
+		if (hoveredIfcItemRef.current) {
+			updateMeshDisplay(hoveredIfcItemRef.current)
+		}
+	}, [updateMeshDisplay])
 
 	const select = useCallback(
 		(ifcItem?: IfcItem): void => {
+			previousSelectedIfcItemRef.current = selectedIfcItemRef.current
 			selectedIfcItemRef.current = ifcItem
-			updateAllIfcItemVisiblity()
 			updateBoundingSphere()
-			// if (fullScreen) return
+			switchSelectedMesh()
+			renderScene()
+
+			console.log(
+				'IfcViewer | selectedIfcItemRef.current:',
+				selectedIfcItemRef.current?.userData.name,
+				selectedIfcItemRef.current?.userData.type,
+				selectedIfcItemRef.current?.userData.properties,
+			)
 
 			if (onMeshSelect) {
 				onMeshSelect(ifcItem)
 			}
 		},
-
-		[onMeshSelect, updateAllIfcItemVisiblity, updateBoundingSphere],
+		[onMeshSelect, updateBoundingSphere, switchSelectedMesh],
 	)
 
-	const hover = (ifcItem?: IfcItem): void => {
-		hoveredIfcItemRef.current = ifcItem
-		updateAllIfcItemVisiblity()
-		// if (fullScreen) return
+	const hover = useCallback(
+		(ifcItem?: IfcItem): void => {
+			previousHoveredIfcItemRef.current = hoveredIfcItemRef.current
+			hoveredIfcItemRef.current = ifcItem
 
-		if (onMeshHover) {
-			onMeshHover(ifcItem)
-		}
-	}
+			switchHoveredMesh()
+			renderScene()
+
+			if (hoveredIfcItemRef.current) {
+				setCursorStyle({ cursor: 'pointer' })
+				return
+			}
+			setCursorStyle({ cursor: 'default' })
+
+			if (onMeshHover) {
+				onMeshHover(ifcItem)
+			}
+		},
+		[onMeshHover, switchHoveredMesh],
+	)
 
 	const updateMousePointer = (event: MouseEvent): void => {
 		if (!canvasRef.current) throw new Error('Canvas not loaded')
@@ -449,12 +522,15 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		}
 		rayCasterRef.current.setFromCamera(pointerRef.current, cameraRef.current)
 		const allIntersections = rayCasterRef.current.intersectObjects(sceneRef.current.children)
-		selectableIntersectionsRef.current = allIntersections.filter(intersection => {
+
+		const selectableIfcMeshes = allIntersections.filter(intersection => {
 			if (intersection.object instanceof IfcMesh) {
-				return intersection.object.parent.isSelectable
+				return intersection.object.parent.userData.selectable
 			}
 			return false
 		}) as Intersection<IfcMesh>[]
+
+		selectableIntersectionsRef.current = selectableIfcMeshes
 	}
 
 	// const transformViewportPositionToScreenPosition = (position: Vector3): { x: number; y: number } => {
@@ -475,74 +551,82 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	// 	return { x, y }
 	// }
 
-	const handleMouseLeave = (): void => {
+	const handleMouseLeave = useCallback((): void => {
 		hover()
-	}
+	}, [hover])
 
-	const handleMouseDown = (event: MouseEvent<HTMLCanvasElement>): void => {
+	const handleMouseDown = useCallback((event: MouseEvent<HTMLCanvasElement>): void => {
 		mouseStatusRef.current = { clicked: true, x: event.clientX, y: event.clientY }
-		shouldRerenderRef.current = true
-	}
+		renderingEnabledRef.current = true
+	}, [])
 
-	const handleMouseUp = (event: MouseEvent<HTMLCanvasElement>): void => {
-		shouldRerenderRef.current = false
-		if (!mouseStatusRef.current.clicked) return
-		const currentX = event.clientX
-		const currentY = event.clientY
+	const handleMouseUp = useCallback(
+		(event: MouseEvent<HTMLCanvasElement>): void => {
+			renderingEnabledRef.current = false
+			if (!mouseStatusRef.current.clicked) return
+			const currentX = event.clientX
+			const currentY = event.clientY
 
-		if (Math.abs(currentX - mouseStatusRef.current.x) > 8 || Math.abs(currentY - mouseStatusRef.current.y) > 8) {
-			mouseStatusRef.current = { clicked: false, x: 0, y: 0 }
-			return
-		}
+			if (
+				Math.abs(currentX - mouseStatusRef.current.x) > 8 ||
+				Math.abs(currentY - mouseStatusRef.current.y) > 8
+			) {
+				mouseStatusRef.current = { clicked: false, x: 0, y: 0 }
+				return
+			}
 
-		if (!enableMeshSelection) return
+			if (!enableMeshSelection) return
 
-		updateMousePointer(event)
-		updateIntersections()
+			updateMousePointer(event)
+			updateIntersections()
 
-		// Check if there are intersections
-		if (selectableIntersectionsRef.current.length === 0) {
-			select()
-			return
-		}
+			// Check if there are intersections
+			if (selectableIntersectionsRef.current.length === 0) {
+				select()
+				return
+			}
 
-		const firstIntersectedObject = selectableIntersectionsRef.current[0]?.object
-		const ifcItem = firstIntersectedObject?.getIfcItem()
+			const firstIntersectedMesh = selectableIntersectionsRef.current.at(0)?.object
+			const ifcItem = firstIntersectedMesh?.getIfcItem()
 
-		if (!ifcItem?.isSelectable()) {
-			select()
-			return
-		}
+			if (selectableRequirements && selectableRequirements.length > 0 && !ifcItem?.isSelectable()) {
+				select()
+				return
+			}
 
-		select(ifcItem)
-	}
+			select(ifcItem)
+			renderScene()
+		},
+		[enableMeshSelection, select, selectableRequirements],
+	)
 
-	const handleMouseMove = (event: MouseEvent<HTMLCanvasElement>): void => {
-		shouldRerenderRef.current = true
-		if (shouldRerenderTimeoutRef.current) {
-			clearTimeout(shouldRerenderTimeoutRef.current)
-		}
-		shouldRerenderTimeoutRef.current = setTimeout(() => {
-			shouldRerenderRef.current = false
-		}, 1000)
+	const handleMouseMove = useCallback(
+		(event: MouseEvent<HTMLCanvasElement>): void => {
+			renderingEnabledRef.current = true
+			if (renderingTimeoutRef.current) {
+				clearTimeout(renderingTimeoutRef.current)
+			}
+			renderingTimeoutRef.current = setTimeout(() => {
+				renderingEnabledRef.current = false
+			}, 1000)
 
-		if (!enableMeshHover) return
-		updateMousePointer(event)
-		updateIntersections()
-		const intersectedMesh =
-			selectableIntersectionsRef.current.length > 0 ? selectableIntersectionsRef.current[0]?.object : undefined
+			if (!enableMeshHover) return
+			updateMousePointer(event)
+			updateIntersections()
+			const firstIntersectedMesh = selectableIntersectionsRef.current.at(0)?.object
+			const ifcItem = firstIntersectedMesh?.getIfcItem()
 
-		const ifcItem = intersectedMesh?.getIfcItem()
+			if (selectableRequirements && selectableRequirements.length > 0 && !ifcItem?.isSelectable()) {
+				hover()
+				return
+			}
 
-		if (!ifcItem?.isSelectable()) {
-			hover()
-			return
-		}
+			hover(ifcItem)
+		},
+		[enableMeshHover, hover, selectableRequirements],
+	)
 
-		hover(ifcItem)
-	}
-
-	const handleMoveAt = useCallback((): void => {
+	const fitViewOnBoundingSphere = useCallback((): void => {
 		if (!boundingSphereRef.current) return
 		if (!cameraRef.current) {
 			throw new Error('Camera not found')
@@ -552,18 +636,28 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		}
 		fitBoundingSphere(boundingSphereRef.current, cameraRef.current, controlsRef.current)
 		renderScene()
-		console.log('handle move render')
-	}, [renderScene])
+	}, [])
 
-	const handleLookAt = (): void => {
+	const focusViewToBoundingSphere = (): void => {
 		if (!boundingSphereRef.current) return
 		if (!controlsRef.current) {
 			throw new Error('Controls not found')
 		}
 		controlsRef.current.target.copy(boundingSphereRef.current.center)
 		renderScene()
-		console.log('look at render')
 	}
+
+	const selectByExpressId = useCallback(
+		(expressId: number | undefined): void => {
+			if (!expressId) {
+				select()
+				return undefined
+			}
+			const ifcItem = modelRef.current.getIfcItem(expressId)
+			select(ifcItem)
+		},
+		[select],
+	)
 
 	const selectByProperty = useCallback(
 		(property: Property | undefined): IfcItem | undefined => {
@@ -578,11 +672,11 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 			const foundItem = foundItems[0]
 
 			select(foundItem)
-			handleMoveAt()
+			fitViewOnBoundingSphere()
 
 			return foundItem
 		},
-		[handleMoveAt, select],
+		[fitViewOnBoundingSphere, select],
 	)
 
 	const unloadEverything = useCallback((): void => {
@@ -595,13 +689,13 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 
 	const loadFile = useCallback(async (): Promise<void> => {
 		resetScene()
-		await loadIfc(
+		await loadIfcFile(
 			url,
 			model => {
 				modelRef.current = model
 				sceneRef.current.add(modelRef.current)
 
-				centerObject(modelRef.current)
+				alignObject(modelRef.current, { x: 'center', y: 'bottom', z: 'center' })
 
 				sceneRef.current.updateMatrix()
 				sceneRef.current.updateMatrixWorld(true)
@@ -618,8 +712,8 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 				if (boundingSphereRef.current) {
 					fitBoundingSphere(boundingSphereRef.current, cameraRef.current, controlsRef.current)
 				}
+
 				renderScene()
-				console.log('on load render')
 
 				if (data) {
 					restoreData(modelRef.current, data)
@@ -632,6 +726,7 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 						anchorRequirements,
 					)
 				}
+
 				// generateAnchors()
 
 				console.log(modelRef.current)
@@ -640,8 +735,8 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 					onLoad({
 						model: modelRef.current,
 						selectableItems: modelRef.current.children.filter(ifcItem => ifcItem.userData.selectable),
-						selectByExpressId: selectIfcItemByExpressId,
-						selectByProperty: selectByProperty,
+						selectByExpressId,
+						selectByProperty,
 					})
 				}
 			},
@@ -652,29 +747,50 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 			error => {
 				console.error(error)
 				renderScene()
-				console.log('error render')
 			},
-			Boolean(data),
+			data === undefined,
 		)
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [url])
+			.then(() => {
+				statusRef.current = 'MODEL_LOADED'
+			})
+			.catch((error: unknown) => {
+				statusRef.current = 'NOT_INITIALIZED'
+				console.error(error)
+			})
+	}, [
+		alwaysVisibleRequirements,
+		anchorRequirements,
+		data,
+		linksRequirements,
+		onLoad,
+		selectByExpressId,
+		selectByProperty,
+		selectableRequirements,
+		updateBoundingSphere,
+		url,
+	])
 
 	const handleChangeModelVisibilityMode = (): void => {
-		switch (modelVisibilityMode) {
-			case 'selectable': {
-				setModelVisibilityMode('all')
-				break
+		setViewMode(mode => {
+			switch (mode) {
+				case 'VIEW_MODE_SELECTABLE': {
+					return 'VIEW_MODE_ALL'
+				}
+				case 'VIEW_MODE_ALL': {
+					return 'VIEW_MODE_TRANSPARENT'
+				}
+				case 'VIEW_MODE_TRANSPARENT': {
+					return 'VIEW_MODE_SELECTABLE'
+				}
 			}
-			case 'all': {
-				setModelVisibilityMode('transparent')
-				break
-			}
-			case 'transparent': {
-				setModelVisibilityMode('selectable')
-				break
-			}
-		}
+		})
 	}
+
+	useEffect(() => {
+		viewModeRef.current = viewMode
+		updateAllMeshesDisplay()
+		renderScene()
+	}, [updateAllMeshesDisplay, viewMode])
 
 	// useEffect(() => {
 	// 	setAnchors(anchorsList => {
@@ -703,11 +819,11 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 	// }, [updateAnchors, visibleMarkers])
 
 	//init graphics
-	useLayoutEffect(() => {
+
+	const init = useCallback(() => {
 		if (!canvasRef.current) {
 			throw new Error('Canvas not found')
 		}
-		console.log('graphic init')
 		const canvas = canvasRef.current
 		// Renderer
 		rendererRef.current = new WebGLRenderer({
@@ -739,75 +855,55 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 		controls.maxPolarAngle = Math.PI / 2
 		// Raycaster
 		rayCasterRef.current.layers.set(LAYER_MESHES)
-	}, [])
 
-	//init
-	useEffect(() => {
 		if (!containerRef.current) {
 			throw new Error('Container not found')
 		}
 
+		resizeObserverRef.current = new ResizeObserver(() => {
+			renderScene()
+		})
+		resizeObserverRef.current.observe(containerRef.current)
+
 		resetScene()
 
 		const animate = (): void => {
-			console.log('animate render')
-			// if (shouldRerenderRef.current) {
-			// updateAnchors()
-			renderScene()
+			if (renderingEnabledRef.current) {
+				// updateAnchors()
+				renderScene()
+			}
 			animationFrameIdRef.current = requestAnimationFrame(animate)
-			// }
 		}
 		animate()
 
-		const resizeObserver = new ResizeObserver(() => {
-			console.log('resize observer render')
-			renderScene()
-		})
-
-		resizeObserver.observe(containerRef.current)
-
 		statusRef.current = 'READY'
+	}, [])
+
+	// const addAxesHelper = () => {
+	// 	const axesHelper = new AxesHelper(1000)
+	// 	axesHelper.layers.set(LAYER_HELPERS)
+	// 	sceneRef.current.add(axesHelper)
+	// }
+
+	useEffect(() => {
+		init()
+		void loadFile()
 
 		return () => {
 			unloadEverything()
-			resizeObserver.disconnect()
+			resizeObserverRef.current?.disconnect()
 		}
-
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [])
-
-	useEffect(() => {
-		if (statusRef.current === 'NOT_INITIALIZED') return
-		loadFile()
-			.then(() => {
-				console.log('MODEL_LOADED')
-				statusRef.current = 'MODEL_LOADED'
-			})
-			.catch((error: unknown) => {
-				console.log('NOT_INITIALIZED')
-				statusRef.current = 'NOT_INITIALIZED'
-				console.error(error)
-			})
-	}, [loadFile])
+	}, [init, loadFile, unloadEverything])
 
 	return (
-		<div
-			className={clsx(
-				fullScreen
-					? 'fixed inset-0 z-40 bg-white dark:bg-neutral-900'
-					: 'relative min-h-80 overflow-hidden rounded-lg',
-				className,
-			)}
-			ref={containerRef}
-			{...otherProps}
-		>
+		<div className={clsx('ifc-viewer', className)} ref={containerRef} {...otherProps}>
 			<canvas
-				className="absolute inset-0 h-full w-full"
 				ref={canvasRef}
 				onMouseDown={handleMouseDown}
 				onMouseUp={handleMouseUp}
 				onMouseMove={handleMouseMove}
 				onMouseLeave={handleMouseLeave}
+				style={cursorStyle}
 			/>
 			{/* {anchors.map(anchor =>
 				anchor.visible ? (
@@ -822,23 +918,13 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 			)} */}
 			<div className="absolute right-4 top-4 z-10 flex flex-col gap-4">
 				<div className="flex flex-wrap gap-4">
-					<button title="Guarda verso" type="button" onClick={handleLookAt}>
+					<button title="Guarda verso" type="button" onClick={focusViewToBoundingSphere}>
 						<EyeIcon className="size-6" />
 					</button>
-					<button title="Muovi verso" type="button" onClick={handleMoveAt}>
+					<button title="Muovi verso" type="button" onClick={fitViewOnBoundingSphere}>
 						<ArrowUpIcon className="size-6" />
 					</button>
 
-					<button
-						title={fullScreen ? 'Esci da modalità schermo intero' : 'Modalità a schermo intero'}
-						type="button"
-						// disabled={isLoading}
-						onClick={() => {
-							setFullScreen(prev => !prev)
-						}}
-					>
-						{fullScreen ? <Minimize2Icon className="size-6" /> : <FullscreenIcon className="size-6" />}
-					</button>
 					<button
 						title="Cambia modalità visualizzazione meshes"
 						type="button"
@@ -846,11 +932,11 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 						onClick={handleChangeModelVisibilityMode}
 					>
 						{(() => {
-							switch (modelVisibilityMode) {
-								case 'all': {
+							switch (viewMode) {
+								case 'VIEW_MODE_ALL': {
 									return <HouseIcon className="size-6" />
 								}
-								case 'transparent': {
+								case 'VIEW_MODE_TRANSPARENT': {
 									return (
 										<div className="relative">
 											<HouseIcon className="absolute inset-0 size-6 opacity-30" />
@@ -858,7 +944,7 @@ const IfcViewer = forwardRef<HTMLDivElement, IfcViewerProps>((props, ref) => {
 										</div>
 									)
 								}
-								case 'selectable': {
+								case 'VIEW_MODE_SELECTABLE': {
 									return <BarChart2 className="size-6" />
 								}
 							}

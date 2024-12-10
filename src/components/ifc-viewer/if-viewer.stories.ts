@@ -15,6 +15,13 @@ type Story = StoryObj<typeof meta>
 
 const defaultProps: IfcViewerProps = {
 	url: '/test/castle.ifc',
+	enableMeshHover: true,
+	enableMeshSelection: true,
+	style: { minHeight: '480px' },
+	links: [],
+	selectable: [{ requiredType: 'IfcDistributionControlElement' }],
+	alwaysVisible: [{ requiredType: 'IfcDistributionControlElement' }],
+	anchors: [],
 }
 
 export const DefaultViewer: Story = {

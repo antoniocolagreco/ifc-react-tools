@@ -37,10 +37,11 @@ const buildIfcItem = (ifcAPI: IfcAPI, modelID: number, flatMesh: FlatMesh, model
 		// If geometryRecord is not found, create a new one
 		if (!geometry) {
 			geometry = getBufferGeometry(ifcAPI, modelID, geometryExpressID)
+			model.setItemGeometry(geometryId, geometry)
 		}
 		const matrix = new Matrix4()
 		matrix.fromArray(flatTransformation)
-		geometry.applyMatrix4(matrix)
+		// geometry.applyMatrix4(matrix)
 
 		const color = new Color(x, y, z)
 		const materialId = getMaterialId(x, y, z, transparent)
@@ -58,6 +59,8 @@ const buildIfcItem = (ifcAPI: IfcAPI, modelID: number, flatMesh: FlatMesh, model
 		}
 
 		const ifcMesh = new IfcMesh(geometry, material, ifcItem, geometryId, materialId)
+
+		ifcMesh.applyMatrix4(matrix)
 
 		ifcItem.add(ifcMesh)
 	}
@@ -137,4 +140,16 @@ const convertGeometryToBuffer = (vertexData: Float32Array, indexData: Uint32Arra
 	return geometry
 }
 
-export { buildIfcItem }
+const cloneMesh = (mesh: IfcMesh): IfcMesh => {
+	const clone = new IfcMesh(
+		mesh.geometry,
+		mesh.material,
+		mesh.parent,
+		mesh.userData.geometryId,
+		mesh.userData.materialId,
+	)
+	clone.applyMatrix4(mesh.matrix)
+	return clone
+}
+
+export { buildIfcItem, cloneMesh }
